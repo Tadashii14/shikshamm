@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Admin Dashboard</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>👨‍🏫 Admin Dashboard</h1>
+        <div class="user-info">
+          <span id="userEmail"></span>
+          <button onclick="logout()" class="logout-btn">Logout</button>
+        </div>
+      </div>
+
+      <div class="session-controls">
+        <h2>Session Management</h2>
+        <div class="row">
+          <div class="col">
+            <input id="sessionCode" placeholder="Session Code (e.g., ABC123)" />
+            <input id="subject" placeholder="Subject (optional)" />
+            <button id="startSessionBtn" onclick="startSession()" class="primary-btn">
+              🎬 Start Session
+            </button>
+            <button id="endSessionBtn" onclick="endSession()" class="danger-btn" disabled>
+              ⏹️ End Session
+            </button>
+          </div>
+          <div class="col">
+            <div id="sessionStatus" class="status-indicator">
+              <span class="status-dot inactive"></span>
+              <span>No Active Session</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="face-detection-section">
+        <h2>Camera & Attendance</h2>
+        <div class="row">
+          <div class="col">
+            <div class="camera-container">
+              <video id="video" autoplay muted playsinline></video>
+              <div id="faceRecognitionStatus" class="status-indicator">
+                <span class="status-dot inactive"></span>
+                <span>Face Recognition: Not Available</span>
+              </div>
+            </div>
+            <div class="camera-controls">
+              <button id="startCameraBtn" onclick="startCamera()" class="primary-btn">
+                📹 Start Camera
+              </button>
+              <button id="stopCameraBtn" onclick="stopCamera()" class="secondary-btn" disabled>
+                ⏹️ Stop Camera
+              </button>
+            </div>
+            <div class="manual-attendance">
+              <h3>Manual Attendance</h3>
+              <div class="form-group">
+                <label for="manualAdmissionNumber">Admission Number:</label>
+                <input type="text" id="manualAdmissionNumber" placeholder="Enter admission number" />
+              </div>
+              <button onclick="markManualAttendance()" class="primary-btn">
+                ✅ Mark Present
+              </button>
+            </div>
+          </div>
+          <div class="col">
+            <div class="attendance-log">
+              <h3>Recent Attendance</h3>
+              <div id="attendanceList" class="attendance-list">
+                <p class="no-data">No attendance marked yet</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="student-management-section">
+        <h2>Student Management</h2>
+        <div class="row">
+          <div class="col">
+            <h3>Add New Student</h3>
+            <div class="form-group">
+              <label for="studentName">Full Name:</label>
+              <input type="text" id="studentName" placeholder="Enter student name" />
+            </div>
+            <div class="form-group">
+              <label for="studentEmail">Email:</label>
+              <input type="email" id="studentEmail" placeholder="Enter student email" />
+            </div>
+            <div class="form-group">
+              <label for="admissionNumber">Admission Number:</label>
+              <input type="text" id="admissionNumber" placeholder="Enter admission number" />
+            </div>
+            <button onclick="addStudent()" class="primary-btn">
+              👤 Add Student
+            </button>
+          </div>
+          <div class="col">
+            <h3>Enroll Student Face</h3>
+            <div class="camera-container">
+              <video id="enrollVideo" autoplay muted playsinline></video>
+              <canvas id="enrollCanvas" style="display: none;"></canvas>
+            </div>
+            <div class="form-group">
+              <label for="enrollAdmissionNumber">Admission Number:</label>
+              <input type="text" id="enrollAdmissionNumber" placeholder="Enter admission number" />
+            </div>
+            <div class="camera-controls">
+              <button id="startEnrollCameraBtn" onclick="startEnrollCamera()" class="primary-btn">
+                📹 Start Camera
+              </button>
+              <button id="enrollFaceBtn" onclick="enrollStudentFace()" class="secondary-btn" disabled>
+                📸 Enroll Face
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="notification" class="notification hidden">
+      <span id="notificationText"></span>
+    </div>
+
+    <script>
+      // Firebase config
+      const firebaseConfig = {
+        apiKey: "AIzaSyBI9FWOhqfS6e1aHpC_guvx1r_zy14cobk",
+        authDomain: "attendance-system-a1ac4.firebaseapp.com",
+        projectId: "attendance-system-a1ac4",
+        storageBucket: "attendance-system-a1ac4.firebasestorage.app",
+        messagingSenderId: "462766302633",
+        appId: "1:462766302633:web:b45441d758dc007c4250b8",
+        measurementId: "G-2MMSHHN4CK"
+      };
+
+      // Initialize Firebase
+      if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+      const auth = firebase.auth();
+      const db = firebase.firestore();
+
+      let currentSession = null;
+      let video = null;
+      let adminStream = null;
+      let adminLoop = null;
+
+      // Check authentication
+      auth.onAuthStateChanged(user => {
+        if (!user) {
+          location.href = "/login";
+          return;
+        }
+        
+        const role = localStorage.getItem("role");
+        if (role !== "teacher" && role !== "admin") {
+          alert("Access denied. Teacher role required.");
+          location.href = "/login";
+          return;
+        }
+        
+        document.getElementById("userEmail").textContent = user.email;
+        
+        // Set admin key for API calls
+        localStorage.setItem('ADMIN_KEY', 'super-secret-key');
+      });
+
+      async function startSession() {
+        const code = document.getElementById('sessionCode').value;
+        const subject = document.getElementById('subject').value;
+        
+        if (!code) {
+          showNotification('Please enter a session code', 'error');
+          return;
+        }
+        
+        try {
+          // Create or get the AUTO class
+          await fetch('/admin/classes?name=Auto Class&code=AUTO&created_by_user_id=1', { method: 'POST' });
+          
+          // Start session
+          const response = await fetch(`/admin/sessions/start?class_code=AUTO&code=${encodeURIComponent(code)}&subject=${encodeURIComponent(subject)}`, { method: 'POST' });
+          
+          if (response.ok) {
+            currentSession = { code: code };
+            document.getElementById('sessionStatus').innerHTML = '<span class="status-dot active"></span><span>Session Active</span>';
+            document.getElementById("startSessionBtn").disabled = true;
+            document.getElementById("endSessionBtn").disabled = false;
+            showNotification('Session started successfully!', 'success');
+            
+            // Auto-start camera
+            await startCamera();
+          } else {
+            const error = await response.json();
+            showNotification(error.detail || 'Failed to start session', 'error');
+          }
+        } catch (error) {
+          showNotification('Network error. Please try again.', 'error');
+        }
+      }
+
+      async function endSession() {
+        if (!currentSession) return;
+        
+        try {
+          const response = await fetch(`/admin/sessions/stop?code=${encodeURIComponent(currentSession.code)}`, { method: 'POST' });
+          
+          if (response.ok) {
+            currentSession = null;
+            document.getElementById('sessionStatus').innerHTML = '<span class="status-dot inactive"></span><span>No Active Session</span>';
+            document.getElementById("startSessionBtn").disabled = false;
+            document.getElementById("endSessionBtn").disabled = true;
+            showNotification('Session stopped successfully!', 'success');
+            
+            // Stop camera
+            stopCamera();
+          } else {
+            showNotification('Failed to stop session', 'error');
+          }
+        } catch (error) {
+          showNotification('Network error. Please try again.', 'error');
+        }
+      }
+
+      async function startCamera() {
+        try {
+          adminStream = await navigator.mediaDevices.getUserMedia({ 
+            video: { 
+              width: { ideal: 320 }, 
+              height: { ideal: 240 }, 
+              frameRate: { ideal: 10, max: 15 } // Lower frame rate for better performance
+            }
+          });
+          video = document.getElementById('video');
+          video.srcObject = adminStream;
+          
+          await new Promise(resolve => {
+            if (video.readyState >= 2) return resolve();
+            video.onloadedmetadata = () => resolve();
+          });
+          
+          video.play();
+          document.getElementById("startCameraBtn").disabled = true;
+          document.getElementById("stopCameraBtn").disabled = false;
+          
+          // Start auto-identify loop with slower interval for better performance
+          adminLoop = setInterval(sendFrame, 1000); // 1 FPS instead of 0.5 FPS
+          showNotification('Camera started successfully', 'success');
+          
+        } catch (error) {
+          showNotification('Camera access denied or not available', 'error');
+        }
+      }
+
+      function stopCamera() {
+        if (adminLoop) {
+          clearInterval(adminLoop);
+          adminLoop = null;
+        }
+        
+        if (adminStream) {
+          adminStream.getTracks().forEach(track => track.stop());
+          adminStream = null;
+        }
+        
+        document.getElementById("startCameraBtn").disabled = false;
+        document.getElementById("stopCameraBtn").disabled = true;
+        showNotification('Camera stopped', 'info');
+      }
+
+      let frameCount = 0;
+      const FRAME_SKIP = 5; // Process every 5th frame for better performance
+      
+      async function sendFrame() {
+        if (!currentSession) return;
+        
+        frameCount++;
+        if (frameCount % FRAME_SKIP !== 0) {
+          setTimeout(sendFrame, 200); // 5 FPS instead of 30 FPS
+          return;
+        }
+        
+        try {
+          const video = document.getElementById('video');
+          const canvas = document.createElement('canvas');
+          // Use smaller canvas for faster processing
+          canvas.width = 320;
+          canvas.height = 240;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          
+          const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.7));
+          const fd = new FormData();
+          fd.append('code', currentSession.code);
+          fd.append('file', new File([blob], 'frame.jpg', { type: 'image/jpeg' }));
+          
+          const headers = {};
+          const adminKey = localStorage.getItem('ADMIN_KEY') || 'super-secret-key';
+          headers['X-Admin-Key'] = adminKey;
+          
+          const response = await fetch('/face/auto-identify-and-mark', { method: 'POST', body: fd, headers });
+          const data = await response.json();
+          
+          if (response.ok) {
+            if (data.user_id) {
+              addToAttendanceList(`User ${data.user_id}`, new Date());
+              // Update status to show face recognition is working
+              document.getElementById('faceRecognitionStatus').innerHTML = 
+                '<span class="status-dot active"></span><span>Face Recognition: Working</span>';
+            } else {
+              console.log('Face recognition not available:', data.message);
+              // Update status to show face recognition is not available
+              document.getElementById('faceRecognitionStatus').innerHTML = 
+                '<span class="status-dot inactive"></span><span>Face Recognition: Not Available</span>';
+            }
+          } else {
+            console.log('Face recognition error:', data.detail || 'Unknown error');
+            document.getElementById('faceRecognitionStatus').innerHTML = 
+              '<span class="status-dot inactive"></span><span>Face Recognition: Error</span>';
+          }
+        } catch (error) {
+          console.error('Frame processing error:', error);
+        }
+        
+        // Use setTimeout instead of requestAnimationFrame for better control
+        setTimeout(sendFrame, 200); // 5 FPS instead of 30 FPS
+      }
+
+      function addToAttendanceList(studentId, timestamp) {
+        const attendanceList = document.getElementById('attendanceList');
+        const noData = attendanceList.querySelector('.no-data');
+        
+        if (noData) {
+          noData.remove();
+        }
+
+        const attendanceItem = document.createElement('div');
+        attendanceItem.className = 'attendance-item';
+        attendanceItem.innerHTML = `
+          <div class="student-info">
+            <strong>${studentId}</strong>
+            <span class="timestamp">${timestamp.toLocaleTimeString()}</span>
+          </div>
+          <span class="status present">Present</span>
+        `;
+
+        attendanceList.insertBefore(attendanceItem, attendanceList.firstChild);
+
+        // Keep only last 10 items
+        const items = attendanceList.querySelectorAll('.attendance-item');
+        if (items.length > 10) {
+          items[items.length - 1].remove();
+        }
+      }
+
+      function showNotification(message, type = 'info') {
+        const notification = document.getElementById('notification');
+        const notificationText = document.getElementById('notificationText');
+        
+        notificationText.textContent = message;
+        notification.className = `notification ${type}`;
+        notification.classList.remove('hidden');
+
+        setTimeout(() => {
+          notification.classList.add('hidden');
+        }, 3000);
+      }
+
+      // Student Management Functions
+      async function addStudent() {
+        const name = document.getElementById('studentName').value;
+        const email = document.getElementById('studentEmail').value;
+        const admissionNumber = document.getElementById('admissionNumber').value;
+        
+        if (!name || !email || !admissionNumber) {
+          showNotification('Please fill in all fields', 'error');
+          return;
+        }
+        
+        try {
+          const response = await fetch(`/admin/students/create?email=${encodeURIComponent(email)}&full_name=${encodeURIComponent(name)}&admission_number=${encodeURIComponent(admissionNumber)}`, { method: 'POST' });
+          
+          if (response.ok) {
+            showNotification('Student added successfully!', 'success');
+            document.getElementById('studentName').value = '';
+            document.getElementById('studentEmail').value = '';
+            document.getElementById('admissionNumber').value = '';
+          } else {
+            const error = await response.json();
+            showNotification(error.detail || 'Failed to add student', 'error');
+          }
+        } catch (error) {
+          showNotification('Network error. Please try again.', 'error');
+        }
+      }
+
+      async function startEnrollCamera() {
+        try {
+          const video = document.getElementById('enrollVideo');
+          const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          video.srcObject = stream;
+          
+          await new Promise(resolve => {
+            if (video.readyState >= 2) return resolve();
+            video.onloadedmetadata = () => resolve();
+          });
+          
+          video.play();
+          document.getElementById("startEnrollCameraBtn").disabled = true;
+          document.getElementById("enrollFaceBtn").disabled = false;
+          showNotification('Enrollment camera started', 'success');
+        } catch (error) {
+          showNotification('Camera access denied', 'error');
+        }
+      }
+
+      async function enrollStudentFace() {
+        const admissionNumber = document.getElementById('enrollAdmissionNumber').value;
+        
+        if (!admissionNumber) {
+          showNotification('Please enter admission number', 'error');
+          return;
+        }
+        
+        try {
+          const video = document.getElementById('enrollVideo');
+          const canvas = document.getElementById('enrollCanvas');
+          const ctx = canvas.getContext('2d');
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          ctx.drawImage(video, 0, 0);
+          
+          const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.8));
+          const fd = new FormData();
+          fd.append('admission_number', admissionNumber);
+          fd.append('file', new File([blob], 'face.jpg', { type: 'image/jpeg' }));
+          
+          const response = await fetch('/face/enroll-by-admission', { method: 'POST', body: fd });
+          
+          if (response.ok) {
+            const result = await response.json();
+            showNotification(`Face enrolled for admission number: ${admissionNumber}`, 'success');
+            document.getElementById('enrollAdmissionNumber').value = '';
+          } else {
+            const error = await response.json();
+            showNotification(error.detail || 'Enrollment failed', 'error');
+          }
+        } catch (error) {
+          showNotification('Enrollment error: ' + error.message, 'error');
+        }
+      }
+
+      async function markManualAttendance() {
+        const admissionNumber = document.getElementById('manualAdmissionNumber').value;
+        
+        if (!admissionNumber) {
+          showNotification('Please enter admission number', 'error');
+          return;
+        }
+        
+        if (!currentSession) {
+          showNotification('No active session', 'error');
+          return;
+        }
+        
+        try {
+          const response = await fetch(`/admin/students/list`);
+          if (response.ok) {
+            const students = await response.json();
+            const student = students.find(s => s.admission_number === admissionNumber);
+            
+            if (student) {
+              // Mark attendance manually
+              const attendanceResponse = await fetch('/admin/attendance/manual', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  user_id: student.id,
+                  session_code: currentSession.code,
+                  status: 'present'
+                })
+              });
+              
+              if (attendanceResponse.ok) {
+                addToAttendanceList(`Student ${student.full_name} (${admissionNumber})`, new Date());
+                showNotification(`Attendance marked for ${student.full_name}`, 'success');
+                document.getElementById('manualAdmissionNumber').value = '';
+              } else {
+                showNotification('Failed to mark attendance', 'error');
+              }
+            } else {
+              showNotification('Student not found', 'error');
+            }
+          } else {
+            showNotification('Failed to fetch students', 'error');
+          }
+        } catch (error) {
+          showNotification('Error marking attendance: ' + error.message, 'error');
+        }
+      }
+
+      function logout() {
+        auth.signOut().then(() => {
+          localStorage.clear();
+          location.href = "/login";
+        });
+      }
+
+      // Cleanup on page unload
+      window.addEventListener('beforeunload', () => {
+        stopCamera();
+      });
+    </script>
+  </body>
+</html>

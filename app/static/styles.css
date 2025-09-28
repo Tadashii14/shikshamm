@@ -1,0 +1,344 @@
+/* Dark cyberpunk theme */
+:root {
+  --bg: #0b0c0f;
+  --panel: #111318;
+  --panel-2: #151922;
+  --text: #e9ecf1;
+  --muted: #a9b1bd;
+  --primary: #4c8bf5;
+  --primary-2: #2f74f0;
+  --accent: #22c55e;
+  --danger: #ef4444;
+  --warning: #f59e0b;
+  --border: #273043;
+  --shadow: 0 10px 24px rgba(0,0,0,.35);
+  --radius: 12px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  margin: 0;
+  color: var(--text);
+  background:
+    radial-gradient(1200px 600px at 110% -10%, rgba(76,139,245,.15), transparent 40%),
+    radial-gradient(900px 500px at -10% -10%, rgba(34,197,94,.12), transparent 45%),
+    var(--bg);
+  min-height: 100vh;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 20px auto;
+  padding: 20px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 10px;
+  margin-bottom: 20px;
+}
+
+.header h1 {
+  margin: 0;
+}
+
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.logout-btn {
+  background: var(--danger);
+  color: white;
+  border: none;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.session-controls, .face-detection-section, .session-stats {
+  margin-bottom: 20px;
+}
+
+.row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.primary-btn, .danger-btn, .secondary-btn {
+  background: var(--primary);
+  color: white;
+  border: none;
+  padding: 10px 15px;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.danger-btn {
+  background: var(--danger);
+}
+
+.secondary-btn {
+  background: var(--muted);
+}
+
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.status-dot.active {
+  background: var(--accent);
+}
+
+.status-dot.inactive {
+  background: var(--danger);
+}
+
+.camera-container {
+  border: 1px solid var(--border);
+  padding: 10px;
+  margin-bottom: 10px;
+  background: var(--panel-2);
+  border-radius: var(--radius);
+}
+
+video {
+  width: 100%;
+  max-width: 640px;
+}
+
+.attendance-list {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.attendance-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 20px;
+}
+
+.stat-card {
+  text-align: center;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+
+.stat-card h3 {
+  margin: 0;
+  font-size: 2em;
+  color: var(--primary);
+}
+
+.stat-card p {
+  margin: 5px 0 0;
+  color: var(--muted);
+}
+
+.notification {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  padding: 10px 15px;
+  border-radius: 4px;
+  color: white;
+  z-index: 1000;
+}
+
+.notification.success {
+  background: #28a745;
+}
+
+.notification.error {
+  background: #dc3545;
+}
+
+.notification.info {
+  background: #17a2b8;
+}
+
+.hidden {
+  display: none;
+}
+
+/* Login page styles */
+.login-container {
+  max-width: 400px;
+  margin: 100px auto;
+  padding: 20px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.login-container h1 {
+  text-align: center;
+  margin-bottom: 20px;
+  color: var(--text);
+}
+
+.form-group {
+  margin-bottom: 15px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--text);
+}
+
+.form-group input, .form-group select {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.role-selection {
+  display: flex;
+  gap: 10px;
+}
+
+.role-selection label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text);
+}
+
+.btn {
+  width: 100%;
+  padding: 10px;
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.btn:hover {
+  background: var(--primary-2);
+}
+
+/* Additional styles for tools */
+.tools-section h2 {
+  margin-bottom: 20px;
+}
+
+.tools-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 20px;
+}
+
+.tool-card {
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  text-align: center;
+}
+
+.tool-card h3 {
+  margin: 0 0 10px;
+  font-size: 1.2em;
+}
+
+.tool-card p {
+  margin: 0 0 15px;
+  color: var(--muted);
+}
+
+.tool-btn {
+  background: var(--primary);
+  color: white;
+  border: none;
+  padding: 10px 15px;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.tool-btn:hover {
+  background: var(--primary-2);
+}
+
+/* Calculator styles */
+.calculator-section h2 {
+  margin-bottom: 20px;
+}
+
+.calculator {
+  background: var(--panel-2);
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.calculator label {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--text);
+}
+
+.calculator input {
+  width: 100%;
+  padding: 8px;
+  margin-bottom: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.calculator button {
+  width: 100%;
+  padding: 10px;
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.calculator button:hover {
+  background: var(--primary-2);
+}
+
+.calc-result {
+  margin-top: 10px;
+  font-weight: bold;
+  color: var(--accent);
+}

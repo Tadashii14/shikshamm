@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>PDF Flashcards Generator</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #0b0c0f;
+      --panel: #111318;
+      --panel-2: #151922;
+      --text: #e9ecf1;
+      --muted: #a9b1bd;
+      --primary: #4c8bf5;
+      --primary-2: #2f74f0;
+      --accent: #22c55e;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --border: #273043;
+      --shadow: 0 10px 24px rgba(0,0,0,.35);
+      --radius: 12px;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f6f7fb;
+        --panel: #ffffff;
+        --panel-2: #f8fafc;
+        --text: #0e1116;
+        --muted: #495467;
+        --primary: #2563eb;
+        --primary-2: #1d4ed8;
+        --accent: #16a34a;
+        --danger: #dc2626;
+        --warning: #d97706;
+        --border: #e5e7eb;
+        --shadow: 0 10px 24px rgba(16, 24, 40, .08);
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(1200px 600px at 110% -10%, rgba(76,139,245,.15), transparent 40%),
+        radial-gradient(900px 500px at -10% -10%, rgba(34,197,94,.12), transparent 45%),
+        var(--bg);
+      min-height: 100dvh;
+    }
+    .wrap { max-width: 920px; margin: 36px auto; padding: 0 20px 24px; }
+    .header {
+      background: linear-gradient(180deg, var(--panel), var(--panel-2));
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px;
+      box-shadow: var(--shadow);
+    }
+    .header h1 { margin: 0 0 8px; font-size: 22px; font-weight: 700; letter-spacing: .2px; }
+    .sub { margin: 0; color: var(--muted); font-size: 14px; }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+    input[type="file"] {
+      padding: 10px 12px; border: 1px dashed var(--border); border-radius: 10px; background: transparent; color: var(--text); cursor: pointer;
+    }
+    .btn {
+      padding: 10px 14px; border-radius: 10px; border: 1px solid var(--border);
+      background: var(--panel-2); color: var(--text); cursor: pointer;
+      transition: transform .05s ease, background .15s ease, border-color .15s ease; user-select: none;
+    }
+    .btn:hover { background: color-mix(in srgb, var(--panel-2) 80%, var(--text) 3%); }
+    .btn:active { transform: translateY(1px); }
+    .btn[disabled] { opacity: .6; cursor: not-allowed; }
+    .btn.primary {
+      background: linear-gradient(180deg, var(--primary), var(--primary-2));
+      color: #fff;
+      border: 1px solid color-mix(in srgb, var(--primary-2) 80%, black 10%);
+      box-shadow: 0 4px 12px color-mix(in srgb, var(--primary) 40%, transparent);
+    }
+    .btn.primary:hover { filter: brightness(1.05); }
+    .status { font-size: 14px; color: var(--muted); display: inline-flex; align-items: center; gap: 8px; }
+    .status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--primary); box-shadow: 0 0 0 6px color-mix(in srgb, var(--primary) 25%, transparent); }
+    .panel {
+      margin-top: 16px; background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px;
+    }
+    .flashcards-container {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 16px;
+      margin-top: 16px;
+    }
+    .flashcard {
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      cursor: pointer;
+      transition: transform 0.3s ease, box-shadow 0.3s ease;
+      perspective: 1000px;
+      height: 200px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+    }
+    .flashcard:hover {
+      transform: translateY(-5px);
+      box-shadow: var(--shadow);
+    }
+    .flashcard.flipped {
+      background: var(--accent);
+      color: white;
+    }
+    .flashcard-front, .flashcard-back {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+    }
+    .flashcard h3 {
+      margin: 0 0 10px;
+      font-size: 18px;
+      font-weight: 600;
+    }
+    .flashcard p {
+      margin: 0;
+      line-height: 1.5;
+    }
+    .controls {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+  </style>
+
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/build/pdf.min.js" defer></script>
+</head>
+<body>
+  <div class="wrap">
+    <div class="header">
+      <h1>📚 Generate Flashcards from PDF</h1>
+      <p class="sub">Upload a PDF to create interactive flashcards for studying.</p>
+      <div class="row">
+        <input id="pdfInput" type="file" accept="application/pdf" />
+        <button id="parseBtn" class="btn primary" disabled>Generate Flashcards</button>
+        <span id="status" class="status">Select a text-based PDF to begin.</span>
+      </div>
+    </div>
+
+    <div class="panel" id="flashcardsPanel" style="display: none;">
+      <div class="controls">
+        <button id="shuffleBtn" class="btn">Shuffle Cards</button>
+        <button id="resetBtn" class="btn">Reset All</button>
+        <span id="cardCount" class="status"></span>
+      </div>
+      <div id="flashcardsContainer" class="flashcards-container">
+        <!-- Flashcards will be generated here -->
+      </div>
+    </div>
+  </div>
+
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/build/pdf.worker.min.js';
+
+    const pdfInput = document.getElementById('pdfInput');
+    const parseBtn = document.getElementById('parseBtn');
+    const statusEl = document.getElementById('status');
+    const flashcardsPanel = document.getElementById('flashcardsPanel');
+    const flashcardsContainer = document.getElementById('flashcardsContainer');
+    const shuffleBtn = document.getElementById('shuffleBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const cardCountEl = document.getElementById('cardCount');
+
+    let flashcards = [];
+    let currentCardIndex = 0;
+
+    pdfInput.addEventListener('change', () => {
+      parseBtn.disabled = !pdfInput.files?.length;
+      statusEl.textContent = pdfInput.files?.length ? 'PDF selected. Click "Generate Flashcards".' : 'Select a text-based PDF to begin.';
+    });
+
+    parseBtn.addEventListener('click', async () => {
+      const file = pdfInput.files?.[0];
+      if (!file) return;
+
+      statusEl.textContent = 'Processing PDF...';
+      parseBtn.disabled = true;
+
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        let text = '';
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const content = await page.getTextContent();
+          text += content.items.map(item => item.str).join(' ') + '\n';
+        }
+
+        const sentences = splitIntoSentences(cleanText(text));
+        flashcards = generateFlashcards(sentences, 12);
+        
+        renderFlashcards();
+        flashcardsPanel.style.display = 'block';
+        statusEl.textContent = `Generated ${flashcards.length} flashcards successfully.`;
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = `Error: ${err.message}`;
+      } finally {
+        parseBtn.disabled = false;
+      }
+    });
+
+    shuffleBtn.addEventListener('click', () => {
+      flashcards = flashcards.sort(() => Math.random() - 0.5);
+      renderFlashcards();
+      statusEl.textContent = 'Cards shuffled!';
+    });
+
+    resetBtn.addEventListener('click', () => {
+      flashcards.forEach(card => card.flipped = false);
+      renderFlashcards();
+      statusEl.textContent = 'All cards reset to front side.';
+    });
+
+    function renderFlashcards() {
+      flashcardsContainer.innerHTML = '';
+      cardCountEl.textContent = `${flashcards.length} cards`;
+      
+      flashcards.forEach((card, index) => {
+        const cardElement = document.createElement('div');
+        cardElement.className = `flashcard ${card.flipped ? 'flipped' : ''}`;
+        cardElement.onclick = () => flipCard(index);
+        
+        if (card.flipped) {
+          cardElement.innerHTML = `
+            <div class="flashcard-back">
+              <h3>Answer</h3>
+              <p>${card.answer}</p>
+            </div>
+          `;
+        } else {
+          cardElement.innerHTML = `
+            <div class="flashcard-front">
+              <h3>Question</h3>
+              <p>${card.question}</p>
+            </div>
+          `;
+        }
+        
+        flashcardsContainer.appendChild(cardElement);
+      });
+    }
+
+    function flipCard(index) {
+      flashcards[index].flipped = !flashcards[index].flipped;
+      renderFlashcards();
+    }
+
+    // Helper functions
+    function cleanText(text) {
+      return text.replace(/\s+/g, ' ').trim();
+    }
+
+    function splitIntoSentences(text) {
+      return text.split(/[.!?]+/).map(s => s.trim()).filter(s => s.length > 10);
+    }
+
+    function generateFlashcards(sentences, count) {
+      const cards = [];
+      for (let i = 0; i < Math.min(count, sentences.length - 1); i++) {
+        const sentence = sentences[i];
+        if (sentence.length < 20) continue;
+        
+        // Extract key terms and create Q&A pairs
+        const words = sentence.split(' ');
+        if (words.length < 5) continue;
+        
+        // Create a simple question-answer pair
+        const keyWord = words[Math.floor(words.length / 2)];
+        const question = `What is ${keyWord}?`;
+        const answer = sentence;
+        
+        cards.push({
+          question: question,
+          answer: answer,
+          flipped: false
+        });
+      }
+      return cards;
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Login - Attendance System</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  </head>
+  <body>
+    <div class="login-container">
+      <h1 id="pageTitle">Login to Attendance System</h1>
+      <div id="formToggle">
+        <button type="button" id="loginTab" class="tab-btn active">Login</button>
+        <button type="button" id="registerTab" class="tab-btn">Register</button>
+      </div>
+      
+      <form id="loginForm">
+        <div class="form-group">
+          <label for="email">Email:</label>
+          <input type="email" id="email" required />
+        </div>
+        <div class="form-group">
+          <label for="password">Password:</label>
+          <input type="password" id="password" required />
+        </div>
+        <button type="submit" class="btn">Login</button>
+      </form>
+
+      <form id="registerForm" style="display: none;">
+        <div class="form-group">
+          <label for="regEmail">Email:</label>
+          <input type="email" id="regEmail" required />
+        </div>
+        <div class="form-group">
+          <label for="regPassword">Password:</label>
+          <input type="password" id="regPassword" minlength="6" required />
+        </div>
+        <div class="form-group">
+          <label for="confirmPassword">Confirm Password:</label>
+          <input type="password" id="confirmPassword" minlength="6" required />
+        </div>
+        <div class="form-group">
+          <label>Role:</label>
+          <div class="role-selection">
+            <label>
+              <input type="radio" name="regRole" value="student" required /> Student
+            </label>
+            <label>
+              <input type="radio" name="regRole" value="teacher" required /> Teacher
+            </label>
+          </div>
+        </div>
+        <button type="submit" class="btn">Register</button>
+      </form>
+    </div>
+
+    <div id="notification" class="notification hidden">
+      <span id="notificationText"></span>
+    </div>
+
+    <script>
+      // Firebase config
+      const firebaseConfig = {
+        apiKey: "AIzaSyBI9FWOhqfS6e1aHpC_guvx1r_zy14cobk",
+        authDomain: "attendance-system-a1ac4.firebaseapp.com",
+        projectId: "attendance-system-a1ac4",
+        storageBucket: "attendance-system-a1ac4.firebasestorage.app",
+        messagingSenderId: "462766302633",
+        appId: "1:462766302633:web:b45441d758dc007c4250b8",
+        measurementId: "G-2MMSHHN4CK"
+      };
+
+      // Initialize Firebase
+      if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+      const auth = firebase.auth();
+      const db = firebase.firestore();
+
+      const loginForm = document.getElementById('loginForm');
+      const registerForm = document.getElementById('registerForm');
+      const loginTab = document.getElementById('loginTab');
+      const registerTab = document.getElementById('registerTab');
+      const pageTitle = document.getElementById('pageTitle');
+      const notification = document.getElementById('notification');
+      const notificationText = document.getElementById('notificationText');
+
+      // Tab switching
+      loginTab.addEventListener('click', () => {
+        loginForm.style.display = 'block';
+        registerForm.style.display = 'none';
+        loginTab.classList.add('active');
+        registerTab.classList.remove('active');
+        pageTitle.textContent = 'Login to Attendance System';
+      });
+
+      registerTab.addEventListener('click', () => {
+        loginForm.style.display = 'none';
+        registerForm.style.display = 'block';
+        loginTab.classList.remove('active');
+        registerTab.classList.add('active');
+        pageTitle.textContent = 'Register for Attendance System';
+      });
+
+      // Login
+      loginForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        console.log('Login form submitted');
+
+        const email = document.getElementById('email').value.trim();
+        const password = document.getElementById('password').value;
+        console.log('Login attempt for:', email);
+
+        try {
+          console.log('Signing in...');
+          // Sign in
+          const userCredential = await auth.signInWithEmailAndPassword(email, password);
+          const user = userCredential.user;
+          console.log('Signed in user:', user.uid, user.email);
+
+          // Fetch user role from Firestore
+          console.log('Fetching user data from Firestore...');
+          const userDoc = await db.collection('users').doc(user.uid).get();
+          console.log('User doc exists:', userDoc.exists);
+
+          if (userDoc.exists) {
+            const userData = userDoc.data();
+            const role = userData.role;
+            console.log('User role:', role);
+
+            // Store role in localStorage
+            localStorage.setItem('role', role);
+
+            // Redirect based on role
+            if (role === 'teacher') {
+              console.log('Redirecting to admin.html');
+              window.location.href = '/admin';
+            } else if (role === 'student') {
+              console.log('Redirecting to student.html');
+              window.location.href = '/student';
+            }
+          } else {
+            console.log('User data not found in Firestore');
+            showNotification('User data not found. Please contact admin.', 'error');
+          }
+        } catch (error) {
+          console.error('Login error:', error);
+          showNotification('Login failed: ' + error.message, 'error');
+        }
+      });
+
+      // Registration
+      registerForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        console.log('Registration form submitted');
+
+        const email = document.getElementById('regEmail').value.trim();
+        const password = document.getElementById('regPassword').value;
+        const confirmPassword = document.getElementById('confirmPassword').value;
+        const role = document.querySelector('input[name="regRole"]:checked').value;
+
+        console.log('Form values:', { email, password: '***', confirmPassword: '***', role });
+
+        if (password !== confirmPassword) {
+          console.log('Passwords do not match');
+          showNotification('Passwords do not match', 'error');
+          return;
+        }
+
+        if (password.length < 6) {
+          console.log('Password too short');
+          showNotification('Password must be at least 6 characters', 'error');
+          return;
+        }
+
+        try {
+          console.log('Creating user...');
+          // Create user
+          const userCredential = await auth.createUserWithEmailAndPassword(email, password);
+          const user = userCredential.user;
+          console.log('User created:', user.uid);
+
+          // Store role in localStorage
+          localStorage.setItem('role', role);
+
+          // Store user details in Firestore
+          console.log('Saving to Firestore...');
+          await db.collection('users').doc(user.uid).set({
+            email: user.email,
+            role: role,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+          });
+          console.log('Saved to Firestore');
+
+          showNotification('Registration successful! Redirecting...', 'success');
+
+          // Redirect based on role
+          setTimeout(() => {
+            if (role === 'teacher') {
+              window.location.href = '/admin';
+            } else if (role === 'student') {
+              window.location.href = '/student';
+            }
+          }, 1500);
+        } catch (error) {
+          console.error('Registration error:', error);
+          showNotification('Registration failed: ' + error.message, 'error');
+        }
+      });
+
+      function showNotification(message, type = 'info') {
+        notificationText.textContent = message;
+        notification.className = `notification ${type}`;
+        notification.classList.remove('hidden');
+        setTimeout(() => {
+          notification.classList.add('hidden');
+        }, 3000);
+      }
+
+      // Check if already logged in (but don't auto-redirect)
+      auth.onAuthStateChanged(async (user) => {
+        console.log('Auth state changed:', user ? 'logged in' : 'logged out');
+        if (user) {
+          console.log('User UID:', user.uid);
+          // Fetch user role from Firestore
+          try {
+            const userDoc = await db.collection('users').doc(user.uid).get();
+            console.log('User doc exists:', userDoc.exists);
+            if (userDoc.exists) {
+              const userData = userDoc.data();
+              const role = userData.role;
+              console.log('User role:', role);
+
+              // Store role in localStorage
+              localStorage.setItem('role', role);
+
+              // Show logged in status instead of auto-redirecting
+              const loginForm = document.getElementById('loginForm');
+              const registerForm = document.getElementById('registerForm');
+              const formToggle = document.getElementById('formToggle');
+              
+              loginForm.style.display = 'none';
+              registerForm.style.display = 'none';
+              formToggle.style.display = 'none';
+              
+              document.getElementById('pageTitle').textContent = `Welcome back, ${user.email}`;
+              
+              // Add logout button and role-based navigation
+              const container = document.querySelector('.login-container');
+              const loggedInDiv = document.createElement('div');
+              loggedInDiv.innerHTML = `
+                <div style="text-align: center; margin: 20px 0;">
+                  <p style="color: var(--muted); margin-bottom: 20px;">You are logged in as: <strong>${role}</strong></p>
+                  <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+                    <button onclick="goToDashboard()" class="btn" style="background: var(--primary);">
+                      Go to ${role === 'teacher' ? 'Admin' : 'Student'} Dashboard
+                    </button>
+                    <button onclick="logout()" class="btn" style="background: var(--danger);">
+                      Logout
+                    </button>
+                  </div>
+                </div>
+              `;
+              container.appendChild(loggedInDiv);
+            } else {
+              console.log('User doc not found');
+            }
+          } catch (error) {
+            console.error('Error fetching user data:', error);
+          }
+        }
+      });
+
+      function goToDashboard() {
+        const role = localStorage.getItem('role');
+        if (role === 'teacher') {
+          window.location.href = '/admin';
+        } else if (role === 'student') {
+          window.location.href = '/student';
+        }
+      }
+
+      function logout() {
+        auth.signOut().then(() => {
+          localStorage.clear();
+          // Reload the page to show login form again
+          window.location.reload();
+        }).catch((error) => {
+          console.error('Logout error:', error);
+          showNotification('Logout failed: ' + error.message, 'error');
+        });
+      }
+    </script>
+  </body>
+</html>

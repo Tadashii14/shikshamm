@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Student Portal - AttendAI</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>🎓 Student Portal</h1>
+        <div class="user-info">
+          <span id="userEmail"></span>
+          <button class="logout-btn">Logout</button>
+        </div>
+      </div>
+
+      <div class="student-section">
+        <div class="row">
+          <div class="col">
+            <h2>Face Verification & Attendance</h2>
+            <label for="studentId">Student ID:</label>
+            <input type="text" id="studentId" placeholder="Enter your ID">
+            
+            <label for="joinCode">Session Code:</label>
+            <input type="text" id="joinCode" placeholder="Enter session code">
+
+            <div class="camera-container">
+              <video id="camera" autoplay muted playsinline></video>
+              <div id="faceStatus" class="status">
+                <span class="status-dot inactive"></span> Face Recognition: Not Active
+              </div>
+            </div>
+
+            <button id="verifyBtn" class="primary-btn">✅ Verify & Mark Attendance</button>
+            <div id="faceMsg" class="status-msg"></div>
+          </div>
+
+          <div class="col">
+            <h2>Notes & AI Features</h2>
+            <textarea id="notesText" placeholder="Paste your notes here..." rows="6"></textarea>
+            <button id="uploadNotesBtn" class="primary-btn">Upload Notes</button>
+            <div id="notesMsg" class="status-msg"></div>
+
+            <button id="generateFlashcardsBtn" class="secondary-btn">Generate Flashcards</button>
+            <div id="flashcardMsg" class="status-msg"></div>
+
+            <button id="generateQuizBtn" class="secondary-btn">Generate Quiz</button>
+            <div id="quizMsg" class="status-msg"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="notification" class="notification hidden">
+      <span id="notificationText"></span>
+    </div>
+
+    <script>
+      // Logout
+      const logout = () => {
+        sessionStorage.clear();
+        localStorage.clear();
+        location.href = '/login';
+      };
+      document.querySelector('.logout-btn').addEventListener('click', logout);
+
+      // Camera setup
+      const camera = document.getElementById('camera');
+      let stream;
+      async function startCamera() {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          camera.srcObject = stream;
+        } catch (e) {
+          alert('Error accessing camera: ' + e.message);
+        }
+      }
+      startCamera();
+
+      async function captureBlob() {
+        const canvas = document.createElement('canvas');
+        canvas.width = camera.videoWidth;
+        canvas.height = camera.videoHeight;
+        canvas.getContext('2d').drawImage(camera, 0, 0);
+        return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg'));
+      }
+
+      async function uploadFace(url) {
+        const user_id = document.getElementById('studentId').value;
+        const code = document.getElementById('joinCode').value;
+        const blob = await captureBlob();
+        const fd = new FormData();
+        fd.append('user_id', user_id);
+        if (url.includes('verify')) fd.append('code', code);
+        fd.append('file', new File([blob], 'frame.jpg', { type: 'image/jpeg' }));
+        const res = await fetch(url, { method: 'POST', body: fd });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.detail || JSON.stringify(json));
+        return json;
+      }
+
+      // Verify & mark attendance
+      const verifyBtn = document.getElementById('verifyBtn');
+      const faceMsg = document.getElementById('faceMsg');
+      verifyBtn.onclick = async () => {
+        faceMsg.textContent = 'Verifying...';
+        try {
+          const res = await uploadFace('/face/verify-and-mark');
+          faceMsg.textContent = res.message + (res.similarity ? ` (sim=${res.similarity.toFixed(2)})` : '');
+        } catch (e) {
+          faceMsg.textContent = e.message;
+        }
+      };
+
+      // WebSocket for attendance notifications
+      function connectWS() {
+        const uid = document.getElementById('studentId').value;
+        if (!uid) return;
+        const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+        const ws = new WebSocket(`${proto}://${location.host}/ws?user_id=${encodeURIComponent(uid)}`);
+        ws.onmessage = (ev) => { showNotification(ev.data || 'Attendance update'); };
+        ws.onclose = () => setTimeout(connectWS, 5000);
+      }
+      document.getElementById('studentId').addEventListener('change', () => setTimeout(connectWS, 300));
+
+      // Notes upload
+      const uploadNotesBtn = document.getElementById('uploadNotesBtn');
+      const notesText = document.getElementById('notesText');
+      const notesMsg = document.getElementById('notesMsg');
+      uploadNotesBtn.onclick = async () => {
+        const user_id = document.getElementById('studentId').value;
+        const text = notesText.value.trim();
+        if (!text) { notesMsg.textContent = 'Notes cannot be empty.'; return; }
+        notesMsg.textContent = 'Uploading notes...';
+        try {
+          const fd = new FormData();
+          fd.append('user_id', user_id);
+          fd.append('text', text);
+          const res = await fetch('/notes/upload', { method: 'POST', body: fd });
+          const json = await res.json();
+          notesMsg.textContent = json.message || 'Notes uploaded.';
+        } catch (e) {
+          notesMsg.textContent = e.message;
+        }
+      };
+
+      // Flashcards generation
+      const generateFlashcardsBtn = document.getElementById('generateFlashcardsBtn');
+      const flashcardMsg = document.getElementById('flashcardMsg');
+      generateFlashcardsBtn.onclick = async () => {
+        const user_id = document.getElementById('studentId').value;
+        flashcardMsg.textContent = 'Generating flashcards...';
+        try {
+          const res = await fetch(`/notes/generate-flashcards?user_id=${user_id}`);
+          const json = await res.json();
+          flashcardMsg.textContent = json.message || `Generated ${json.count || 0} flashcards`;
+        } catch (e) {
+          flashcardMsg.textContent = e.message;
+        }
+      };
+
+      // Quiz generation
+      const generateQuizBtn = document.getElementById('generateQuizBtn');
+      const quizMsg = document.getElementById('quizMsg');
+      generateQuizBtn.onclick = async () => {
+        const user_id = document.getElementById('studentId').value;
+        quizMsg.textContent = 'Generating quiz...';
+        try {
+          const res = await fetch(`/notes/generate-quiz?user_id=${user_id}`);
+          const json = await res.json();
+          quizMsg.textContent = json.message || `Generated quiz with ${json.questions?.length || 0} questions`;
+        } catch (e) {
+          quizMsg.textContent = e.message;
+        }
+      };
+
+      // Notifications
+      function showNotification(message, type='info') {
+        const notification = document.getElementById('notification');
+        const notificationText = document.getElementById('notificationText');
+        notificationText.textContent = message;
+        notification.className = `notification ${type}`;
+        notification.classList.remove('hidden');
+        setTimeout(() => notification.classList.add('hidden'), 3000);
+      }
+    </script>
+  </body>
+</html>
