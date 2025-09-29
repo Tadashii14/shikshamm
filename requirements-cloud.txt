@@ -26,4 +26,7 @@ httpx==0.25.2
 # PostgreSQL driver for SQLAlchemy/SQLModel on Render (Python 3.13 compatible)
 psycopg[binary]==3.2.10
 
+# System metrics
+psutil==6.0.0
+
 
