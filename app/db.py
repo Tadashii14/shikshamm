@@ -6,9 +6,12 @@ from app.models import User  # make sure User has admission_number in models.py
 # Prefer DATABASE_URL (e.g., Postgres on Render). Fallback to local SQLite.
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./attendai.db")
 
-# Normalize deprecated scheme if Render provides postgres://
+# Normalize scheme and ensure psycopg (v3) driver for Postgres
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+if DATABASE_URL.startswith("postgresql://") and "+" not in DATABASE_URL:
+    # Use psycopg v3 driver explicitly for Python 3.13 compatibility
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
 
 # If using Render Postgres, ensure async drivers are not required by SQLModel
 engine = create_engine(DATABASE_URL, echo=False)
