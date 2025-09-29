@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Study Timetable Generator - AttendAI</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+    
+    <!-- Plotly for visualizations -->
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>🍅 Study Timetable Generator</h1>
+        <div class="user-info">
+          <span id="userEmail"></span>
+          <button onclick="logout()" class="logout-btn">Logout</button>
+        </div>
+      </div>
+
+      <div class="timetable-section">
+        <h2>Create Your Pomodoro Study Schedule</h2>
+        
+        <div class="setup-form">
+          <div class="form-group">
+            <label for="maxBlocks">Maximum study blocks per day:</label>
+            <input type="range" id="maxBlocks" min="1" max="8" value="4" />
+            <span id="maxBlocksValue">4</span>
+            <small>Each block = 1 hour study + 15 min break</small>
+          </div>
+
+          <div class="subjects-section">
+            <h3>📚 Subjects & Difficulty</h3>
+            <div id="subjectsContainer">
+              <div class="subject-input">
+                <input type="text" placeholder="Subject name" class="subject-name" />
+                <select class="difficulty">
+                  <option value="1">1 - Easiest</option>
+                  <option value="2">2</option>
+                  <option value="3">3</option>
+                  <option value="4">4</option>
+                  <option value="5" selected>5 - Medium</option>
+                  <option value="6">6</option>
+                  <option value="7">7</option>
+                  <option value="8">8</option>
+                  <option value="9">9</option>
+                  <option value="10">10 - Hardest</option>
+                </select>
+                <button onclick="removeSubject(this)" class="remove-btn">×</button>
+              </div>
+            </div>
+            <button onclick="addSubject()" class="add-btn">+ Add Subject</button>
+          </div>
+
+          <div class="busy-hours-section">
+            <h3>🚫 Busy Hours (6 AM - 9 PM)</h3>
+            <p>Enter when you're NOT available for study blocks</p>
+            <div id="busyHoursContainer">
+              <div class="day-input">
+                <label>Monday:</label>
+                <input type="text" placeholder="e.g., 8-12, 14-17" class="busy-hours" />
+              </div>
+              <div class="day-input">
+                <label>Tuesday:</label>
+                <input type="text" placeholder="e.g., 8-12, 14-17" class="busy-hours" />
+              </div>
+              <div class="day-input">
+                <label>Wednesday:</label>
+                <input type="text" placeholder="e.g., 8-12, 14-17" class="busy-hours" />
+              </div>
+              <div class="day-input">
+                <label>Thursday:</label>
+                <input type="text" placeholder="e.g., 8-12, 14-17" class="busy-hours" />
+              </div>
+              <div class="day-input">
+                <label>Friday:</label>
+                <input type="text" placeholder="e.g., 8-12, 14-17" class="busy-hours" />
+              </div>
+              <div class="day-input">
+                <label>Saturday:</label>
+                <input type="text" placeholder="e.g., 8-12, 14-17" class="busy-hours" />
+              </div>
+              <div class="day-input">
+                <label>Sunday:</label>
+                <input type="text" placeholder="e.g., 8-12, 14-17" class="busy-hours" />
+              </div>
+            </div>
+          </div>
+
+          <button onclick="generateTimetable()" class="primary-btn">🚀 Generate Timetable</button>
+        </div>
+
+        <div id="timetableResults" class="results-section" style="display: none;">
+          <h3>Your Study Schedule</h3>
+          <div id="metrics" class="metrics"></div>
+          <div id="scheduleVisualization" class="visualization"></div>
+          <div id="dailyBreakdown" class="daily-breakdown"></div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Firebase configuration
+      const firebaseConfig = {
+        apiKey: "AIzaSyBXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+        authDomain: "attendai-xxxxx.firebaseapp.com",
+        projectId: "attendai-xxxxx",
+        storageBucket: "attendai-xxxxx.appspot.com",
+        messagingSenderId: "123456789",
+        appId: "1:123456789:web:abcdefghijklmnop"
+      };
+
+      // Initialize Firebase
+      firebase.initializeApp(firebaseConfig);
+      const auth = firebase.auth();
+      const db = firebase.firestore();
+
+      let currentUser = null;
+
+      // Authentication
+      auth.onAuthStateChanged((user) => {
+        if (user) {
+          currentUser = user;
+          document.getElementById('userEmail').textContent = user.email;
+        } else {
+          window.location.href = '/login';
+        }
+      });
+
+      function logout() {
+        auth.signOut().then(() => {
+          window.location.href = '/login';
+        });
+      }
+
+      // Timetable generation
+      function addSubject() {
+        const container = document.getElementById('subjectsContainer');
+        const subjectDiv = document.createElement('div');
+        subjectDiv.className = 'subject-input';
+        subjectDiv.innerHTML = `
+          <input type="text" placeholder="Subject name" class="subject-name" />
+          <select class="difficulty">
+            <option value="1">1 - Easiest</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5" selected>5 - Medium</option>
+            <option value="6">6</option>
+            <option value="7">7</option>
+            <option value="8">8</option>
+            <option value="9">9</option>
+            <option value="10">10 - Hardest</option>
+          </select>
+          <button onclick="removeSubject(this)" class="remove-btn">×</button>
+        `;
+        container.appendChild(subjectDiv);
+      }
+
+      function removeSubject(button) {
+        button.parentElement.remove();
+      }
+
+      function generateTimetable() {
+        const subjects = {};
+        const subjectInputs = document.querySelectorAll('.subject-input');
+        
+        for (let input of subjectInputs) {
+          const name = input.querySelector('.subject-name').value.trim();
+          const difficulty = parseInt(input.querySelector('.difficulty').value);
+          if (name) {
+            subjects[name] = difficulty;
+          }
+        }
+
+        if (Object.keys(subjects).length === 0) {
+          showNotification('Please add at least one subject', 'error');
+          return;
+        }
+
+        const busyHours = {};
+        const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+        const busyInputs = document.querySelectorAll('.busy-hours');
+        
+        for (let i = 0; i < days.length; i++) {
+          busyHours[days[i]] = busyInputs[i].value.split(',').map(s => s.trim()).filter(s => s);
+        }
+
+        const maxBlocks = parseInt(document.getElementById('maxBlocks').value);
+
+        // Show loading
+        showNotification('Generating your timetable...', 'info');
+
+        // Call API
+        fetch('/api/advanced/timetable/generate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: new URLSearchParams({
+            subjects: JSON.stringify(subjects),
+            busy_hours: JSON.stringify(busyHours),
+            max_blocks_per_day: maxBlocks.toString()
+          })
+        })
+        .then(response => response.json())
+        .then(data => {
+          if (data.success) {
+            displayTimetable(data);
+            showNotification('Timetable generated successfully!', 'success');
+          } else {
+            showNotification('Error generating timetable: ' + data.detail, 'error');
+          }
+        })
+        .catch(error => {
+          showNotification('Error: ' + error.message, 'error');
+        });
+      }
+
+      function displayTimetable(data) {
+        const resultsDiv = document.getElementById('timetableResults');
+        resultsDiv.style.display = 'block';
+
+        // Display metrics
+        const metricsDiv = document.getElementById('metrics');
+        metricsDiv.innerHTML = `
+          <div class="metric">
+            <h4>Weekly Study Blocks</h4>
+            <span>${data.metrics.total_blocks}</span>
+          </div>
+          <div class="metric">
+            <h4>Pure Study Hours</h4>
+            <span>${data.metrics.total_study_hours}h</span>
+          </div>
+          <div class="metric">
+            <h4>Total Time (with breaks)</h4>
+            <span>${data.metrics.total_time_with_breaks.toFixed(1)}h</span>
+          </div>
+          <div class="metric">
+            <h4>Daily Average</h4>
+            <span>${data.metrics.daily_average.toFixed(1)}h</span>
+          </div>
+        `;
+
+        // Display daily breakdown
+        const dailyDiv = document.getElementById('dailyBreakdown');
+        let dailyHTML = '<h4>Daily Schedule</h4><div class="daily-schedule">';
+        
+        for (let day of data.daily_summary) {
+          dailyHTML += `
+            <div class="day-schedule">
+              <h5>${day.Day}</h5>
+              <p><strong>Study Hours:</strong> ${day['Study Hours']}</p>
+              <p><strong>Subjects:</strong> ${day.Subjects}</p>
+              <p><strong>Time:</strong> ${day['Start Time']} - ${day['End Time']}</p>
+            </div>
+          `;
+        }
+        
+        dailyHTML += '</div>';
+        dailyDiv.innerHTML = dailyHTML;
+
+        // Note: Schedule visualization would require more complex Plotly integration
+        // For now, we'll show a simple text representation
+        const vizDiv = document.getElementById('scheduleVisualization');
+        vizDiv.innerHTML = '<h4>Schedule Visualization</h4><p>Visual timeline would be displayed here with Plotly.js</p>';
+      }
+
+      // Update slider value display
+      document.getElementById('maxBlocks').addEventListener('input', function() {
+        document.getElementById('maxBlocksValue').textContent = this.value;
+      });
+
+      function showNotification(message, type) {
+        // Simple notification system
+        const notification = document.createElement('div');
+        notification.className = `notification ${type}`;
+        notification.textContent = message;
+        notification.style.cssText = `
+          position: fixed;
+          top: 20px;
+          right: 20px;
+          padding: 10px 20px;
+          border-radius: 5px;
+          color: white;
+          z-index: 1000;
+          background: ${type === 'error' ? '#ff4444' : type === 'success' ? '#44ff44' : '#4444ff'};
+        `;
+        document.body.appendChild(notification);
+        setTimeout(() => notification.remove(), 3000);
+      }
+    </script>
+  </body>
+</html>
+

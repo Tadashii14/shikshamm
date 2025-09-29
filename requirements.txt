@@ -16,3 +16,21 @@ pypdf==4.3.1
 openai==1.44.0
 scikit-learn==1.5.2
 pandas==2.2.3
+# Advanced PDF processing
+PyPDF2==3.0.1
+# Timetable and scheduling
+plotly==5.17.0
+pytz==2024.1
+# Google Calendar integration
+google-auth==2.23.4
+google-auth-oauthlib==1.1.0
+google-auth-httplib2==0.2.0
+google-api-python-client==2.108.0
+# Production enhancements
+redis==5.0.1
+slowapi==0.1.9
+structlog==23.2.0
+prometheus-client==0.19.0
+pytest==7.4.3
+pytest-asyncio==0.21.1
+httpx==0.25.2

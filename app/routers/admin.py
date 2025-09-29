@@ -98,6 +98,45 @@ def mark_manual_attendance(user_id: int, session_code: str, status: str, session
     return {"message": "Marked present", "user_id": user_id}
 
 
+@router.get("/attendance/stats/{user_id}")
+def get_attendance_stats(user_id: int, session: Session = Depends(get_session)):
+    """Get real-time attendance statistics for a user"""
+    # Get all sessions the user has attended
+    attended_sessions = session.exec(
+        select(AttendanceSession)
+        .join(Attendance)
+        .where(Attendance.user_id == user_id, Attendance.status == "present")
+    ).all()
+    
+    # Get all sessions (for total count)
+    all_sessions = session.exec(select(AttendanceSession)).all()
+    
+    # Calculate statistics
+    total_sessions = len(all_sessions)
+    attended_count = len(attended_sessions)
+    attendance_percentage = round((attended_count / total_sessions * 100), 1) if total_sessions > 0 else 0
+    
+    # Get last attendance
+    last_attendance = session.exec(
+        select(Attendance)
+        .join(AttendanceSession)
+        .where(Attendance.user_id == user_id, Attendance.status == "present")
+        .order_by(Attendance.created_at.desc())
+        .limit(1)
+    ).first()
+    
+    last_attendance_date = "Never"
+    if last_attendance:
+        last_attendance_date = last_attendance.created_at.strftime("%Y-%m-%d") if last_attendance.created_at else "Unknown"
+    
+    return {
+        "total_sessions": total_sessions,
+        "attended_sessions": attended_count,
+        "attendance_percentage": f"{attendance_percentage}%",
+        "last_attendance": last_attendance_date
+    }
+
+
 @router.get("/sessions/active")
 def get_active_session(class_code: str | None = None, session: Session = Depends(get_session)):
     """Get active session(s) - returns single session for student auto-detection or list for admin"""

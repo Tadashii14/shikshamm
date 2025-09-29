@@ -1,296 +1,378 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <title>PDF Flashcards Generator</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    :root {
-      color-scheme: light dark;
-      --bg: #0b0c0f;
-      --panel: #111318;
-      --panel-2: #151922;
-      --text: #e9ecf1;
-      --muted: #a9b1bd;
-      --primary: #4c8bf5;
-      --primary-2: #2f74f0;
-      --accent: #22c55e;
-      --danger: #ef4444;
-      --warning: #f59e0b;
-      --border: #273043;
-      --shadow: 0 10px 24px rgba(0,0,0,.35);
-      --radius: 12px;
-    }
-    @media (prefers-color-scheme: light) {
-      :root {
-        --bg: #f6f7fb;
-        --panel: #ffffff;
-        --panel-2: #f8fafc;
-        --text: #0e1116;
-        --muted: #495467;
-        --primary: #2563eb;
-        --primary-2: #1d4ed8;
-        --accent: #16a34a;
-        --danger: #dc2626;
-        --warning: #d97706;
-        --border: #e5e7eb;
-        --shadow: 0 10px 24px rgba(16, 24, 40, .08);
-      }
-    }
-    * { box-sizing: border-box; }
-    body {
-      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji", "Segoe UI Emoji";
-      margin: 0;
-      color: var(--text);
-      background:
-        radial-gradient(1200px 600px at 110% -10%, rgba(76,139,245,.15), transparent 40%),
-        radial-gradient(900px 500px at -10% -10%, rgba(34,197,94,.12), transparent 45%),
-        var(--bg);
-      min-height: 100dvh;
-    }
-    .wrap { max-width: 920px; margin: 36px auto; padding: 0 20px 24px; }
-    .header {
-      background: linear-gradient(180deg, var(--panel), var(--panel-2));
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 18px;
-      box-shadow: var(--shadow);
-    }
-    .header h1 { margin: 0 0 8px; font-size: 22px; font-weight: 700; letter-spacing: .2px; }
-    .sub { margin: 0; color: var(--muted); font-size: 14px; }
-    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
-    input[type="file"] {
-      padding: 10px 12px; border: 1px dashed var(--border); border-radius: 10px; background: transparent; color: var(--text); cursor: pointer;
-    }
-    .btn {
-      padding: 10px 14px; border-radius: 10px; border: 1px solid var(--border);
-      background: var(--panel-2); color: var(--text); cursor: pointer;
-      transition: transform .05s ease, background .15s ease, border-color .15s ease; user-select: none;
-    }
-    .btn:hover { background: color-mix(in srgb, var(--panel-2) 80%, var(--text) 3%); }
-    .btn:active { transform: translateY(1px); }
-    .btn[disabled] { opacity: .6; cursor: not-allowed; }
-    .btn.primary {
-      background: linear-gradient(180deg, var(--primary), var(--primary-2));
-      color: #fff;
-      border: 1px solid color-mix(in srgb, var(--primary-2) 80%, black 10%);
-      box-shadow: 0 4px 12px color-mix(in srgb, var(--primary) 40%, transparent);
-    }
-    .btn.primary:hover { filter: brightness(1.05); }
-    .status { font-size: 14px; color: var(--muted); display: inline-flex; align-items: center; gap: 8px; }
-    .status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--primary); box-shadow: 0 0 0 6px color-mix(in srgb, var(--primary) 25%, transparent); }
-    .panel {
-      margin-top: 16px; background: var(--panel); border: 1px solid var(--border);
-      border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px;
-    }
-    .flashcards-container {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-      gap: 16px;
-      margin-top: 16px;
-    }
-    .flashcard {
-      background: var(--panel-2);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 20px;
-      cursor: pointer;
-      transition: transform 0.3s ease, box-shadow 0.3s ease;
-      perspective: 1000px;
-      height: 200px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      text-align: center;
-    }
-    .flashcard:hover {
-      transform: translateY(-5px);
-      box-shadow: var(--shadow);
-    }
-    .flashcard.flipped {
-      background: var(--accent);
-      color: white;
-    }
-    .flashcard-front, .flashcard-back {
-      width: 100%;
-      height: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-direction: column;
-    }
-    .flashcard h3 {
-      margin: 0 0 10px;
-      font-size: 18px;
-      font-weight: 600;
-    }
-    .flashcard p {
-      margin: 0;
-      line-height: 1.5;
-    }
-    .controls {
-      display: flex;
-      gap: 10px;
-      margin-bottom: 16px;
-      flex-wrap: wrap;
-    }
-  </style>
-
-  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/build/pdf.min.js" defer></script>
-</head>
-<body>
-  <div class="wrap">
-    <div class="header">
-      <h1>📚 Generate Flashcards from PDF</h1>
-      <p class="sub">Upload a PDF to create interactive flashcards for studying.</p>
-      <div class="row">
-        <input id="pdfInput" type="file" accept="application/pdf" />
-        <button id="parseBtn" class="btn primary" disabled>Generate Flashcards</button>
-        <span id="status" class="status">Select a text-based PDF to begin.</span>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Flashcards Generator - AttendAI</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>🎴 Smart Flashcards Generator</h1>
+        <div class="user-info">
+          <span id="userEmail"></span>
+          <button onclick="logout()" class="logout-btn">Logout</button>
+        </div>
       </div>
-    </div>
 
-    <div class="panel" id="flashcardsPanel" style="display: none;">
-      <div class="controls">
-        <button id="shuffleBtn" class="btn">Shuffle Cards</button>
-        <button id="resetBtn" class="btn">Reset All</button>
-        <span id="cardCount" class="status"></span>
+      <div class="navigation">
+        <a href="/student" class="nav-link">📚 Dashboard</a>
+        <a href="/quiz" class="nav-link">🧠 Quiz Generator</a>
+        <a href="/flashcards" class="nav-link active">🎴 Flashcards</a>
+        <a href="/timetable" class="nav-link">📅 Study Timetable</a>
       </div>
-      <div id="flashcardsContainer" class="flashcards-container">
-        <!-- Flashcards will be generated here -->
-      </div>
-    </div>
-  </div>
 
-  <script>
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/build/pdf.worker.min.js';
-
-    const pdfInput = document.getElementById('pdfInput');
-    const parseBtn = document.getElementById('parseBtn');
-    const statusEl = document.getElementById('status');
-    const flashcardsPanel = document.getElementById('flashcardsPanel');
-    const flashcardsContainer = document.getElementById('flashcardsContainer');
-    const shuffleBtn = document.getElementById('shuffleBtn');
-    const resetBtn = document.getElementById('resetBtn');
-    const cardCountEl = document.getElementById('cardCount');
-
-    let flashcards = [];
-    let currentCardIndex = 0;
-
-    pdfInput.addEventListener('change', () => {
-      parseBtn.disabled = !pdfInput.files?.length;
-      statusEl.textContent = pdfInput.files?.length ? 'PDF selected. Click "Generate Flashcards".' : 'Select a text-based PDF to begin.';
-    });
-
-    parseBtn.addEventListener('click', async () => {
-      const file = pdfInput.files?.[0];
-      if (!file) return;
-
-      statusEl.textContent = 'Processing PDF...';
-      parseBtn.disabled = true;
-
-      try {
-        const arrayBuffer = await file.arrayBuffer();
-        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-        let text = '';
-        for (let i = 1; i <= pdf.numPages; i++) {
-          const page = await pdf.getPage(i);
-          const content = await page.getTextContent();
-          text += content.items.map(item => item.str).join(' ') + '\n';
-        }
-
-        const sentences = splitIntoSentences(cleanText(text));
-        flashcards = generateFlashcards(sentences, 12);
+      <div class="flashcards-section">
+        <h2>Generate Flashcards from PDF</h2>
         
-        renderFlashcards();
-        flashcardsPanel.style.display = 'block';
-        statusEl.textContent = `Generated ${flashcards.length} flashcards successfully.`;
-      } catch (err) {
-        console.error(err);
-        statusEl.textContent = `Error: ${err.message}`;
-      } finally {
-        parseBtn.disabled = false;
-      }
-    });
-
-    shuffleBtn.addEventListener('click', () => {
-      flashcards = flashcards.sort(() => Math.random() - 0.5);
-      renderFlashcards();
-      statusEl.textContent = 'Cards shuffled!';
-    });
-
-    resetBtn.addEventListener('click', () => {
-      flashcards.forEach(card => card.flipped = false);
-      renderFlashcards();
-      statusEl.textContent = 'All cards reset to front side.';
-    });
-
-    function renderFlashcards() {
-      flashcardsContainer.innerHTML = '';
-      cardCountEl.textContent = `${flashcards.length} cards`;
-      
-      flashcards.forEach((card, index) => {
-        const cardElement = document.createElement('div');
-        cardElement.className = `flashcard ${card.flipped ? 'flipped' : ''}`;
-        cardElement.onclick = () => flipCard(index);
-        
-        if (card.flipped) {
-          cardElement.innerHTML = `
-            <div class="flashcard-back">
-              <h3>Answer</h3>
-              <p>${card.answer}</p>
+        <div class="upload-section">
+          <div class="file-upload">
+            <input type="file" id="pdfFile" accept=".pdf" />
+            <label for="pdfFile" class="file-upload-label">
+              📄 Choose PDF File
+            </label>
+            <span id="fileName" class="file-name"></span>
+          </div>
+          
+          <div class="options">
+            <div class="form-group">
+              <label for="cardsPerParagraph">Cards per paragraph:</label>
+              <input type="range" id="cardsPerParagraph" min="1" max="25" value="12" />
+              <span id="cardsPerParagraphValue">12</span>
             </div>
-          `;
+            
+            <div class="form-group">
+              <label for="fallbackCards">Fallback total cards:</label>
+              <input type="range" id="fallbackCards" min="4" max="40" value="16" />
+              <span id="fallbackCardsValue">16</span>
+            </div>
+            
+            <div class="form-group">
+              <label for="explainMin">Min explanation words:</label>
+              <input type="range" id="explainMin" min="20" max="60" value="25" />
+              <span id="explainMinValue">25</span>
+            </div>
+            
+            <div class="form-group">
+              <label for="explainMax">Max explanation words:</label>
+              <input type="range" id="explainMax" min="30" max="120" value="55" />
+              <span id="explainMaxValue">55</span>
+            </div>
+          </div>
+          
+          <button id="generateBtn" class="primary-btn" disabled>🚀 Generate Flashcards</button>
+        </div>
+
+        <div id="loadingSection" class="loading-section" style="display: none;">
+          <div class="spinner"></div>
+          <p>Processing PDF and generating flashcards...</p>
+        </div>
+
+        <div id="resultsSection" class="results-section" style="display: none;">
+          <h3>Generated Flashcards</h3>
+          <div id="flashcardsContainer" class="flashcards-container"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="notification" class="notification hidden">
+      <span id="notificationText"></span>
+    </div>
+
+    <script>
+      // Firebase configuration
+      const firebaseConfig = {
+        apiKey: "AIzaSyBXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+        authDomain: "attendai-xxxxx.firebaseapp.com",
+        projectId: "attendai-xxxxx",
+        storageBucket: "attendai-xxxxx.appspot.com",
+        messagingSenderId: "123456789",
+        appId: "1:123456789:web:abcdefghijklmnop"
+      };
+
+      // Initialize Firebase
+      firebase.initializeApp(firebaseConfig);
+      const auth = firebase.auth();
+      const db = firebase.firestore();
+
+      let currentUser = null;
+
+      // Authentication
+      auth.onAuthStateChanged((user) => {
+        if (user) {
+          currentUser = user;
+          document.getElementById('userEmail').textContent = user.email;
         } else {
-          cardElement.innerHTML = `
-            <div class="flashcard-front">
-              <h3>Question</h3>
-              <p>${card.question}</p>
-            </div>
-          `;
+          window.location.href = '/login';
         }
-        
-        flashcardsContainer.appendChild(cardElement);
       });
-    }
 
-    function flipCard(index) {
-      flashcards[index].flipped = !flashcards[index].flipped;
-      renderFlashcards();
-    }
-
-    // Helper functions
-    function cleanText(text) {
-      return text.replace(/\s+/g, ' ').trim();
-    }
-
-    function splitIntoSentences(text) {
-      return text.split(/[.!?]+/).map(s => s.trim()).filter(s => s.length > 10);
-    }
-
-    function generateFlashcards(sentences, count) {
-      const cards = [];
-      for (let i = 0; i < Math.min(count, sentences.length - 1); i++) {
-        const sentence = sentences[i];
-        if (sentence.length < 20) continue;
-        
-        // Extract key terms and create Q&A pairs
-        const words = sentence.split(' ');
-        if (words.length < 5) continue;
-        
-        // Create a simple question-answer pair
-        const keyWord = words[Math.floor(words.length / 2)];
-        const question = `What is ${keyWord}?`;
-        const answer = sentence;
-        
-        cards.push({
-          question: question,
-          answer: answer,
-          flipped: false
+      function logout() {
+        auth.signOut().then(() => {
+          window.location.href = '/login';
         });
       }
-      return cards;
-    }
-  </script>
-</body>
+
+      // File upload handling
+      document.getElementById('pdfFile').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (file) {
+          document.getElementById('fileName').textContent = file.name;
+          document.getElementById('generateBtn').disabled = false;
+        } else {
+          document.getElementById('fileName').textContent = '';
+          document.getElementById('generateBtn').disabled = true;
+        }
+      });
+
+      // Update slider values
+      document.getElementById('cardsPerParagraph').addEventListener('input', function() {
+        document.getElementById('cardsPerParagraphValue').textContent = this.value;
+      });
+
+      document.getElementById('fallbackCards').addEventListener('input', function() {
+        document.getElementById('fallbackCardsValue').textContent = this.value;
+      });
+
+      document.getElementById('explainMin').addEventListener('input', function() {
+        document.getElementById('explainMinValue').textContent = this.value;
+      });
+
+      document.getElementById('explainMax').addEventListener('input', function() {
+        document.getElementById('explainMaxValue').textContent = this.value;
+      });
+
+      // Generate flashcards
+      document.getElementById('generateBtn').addEventListener('click', async function() {
+        const fileInput = document.getElementById('pdfFile');
+        const file = fileInput.files[0];
+        
+        if (!file) {
+          showNotification('Please select a PDF file', 'error');
+          return;
+        }
+
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('cards_per_paragraph', document.getElementById('cardsPerParagraph').value);
+        formData.append('fallback_cards_total', document.getElementById('fallbackCards').value);
+        formData.append('explain_min', document.getElementById('explainMin').value);
+        formData.append('explain_max', document.getElementById('explainMax').value);
+
+        // Show loading
+        document.getElementById('loadingSection').style.display = 'block';
+        document.getElementById('resultsSection').style.display = 'none';
+
+        try {
+          const response = await fetch('/api/advanced/pdf/generate-flashcards', {
+            method: 'POST',
+            body: formData
+          });
+
+          const data = await response.json();
+
+          if (data.success) {
+            displayFlashcards(data.cards);
+            showNotification(`Generated ${data.total_cards} flashcards!`, 'success');
+          } else {
+            showNotification('Error: ' + data.detail, 'error');
+          }
+        } catch (error) {
+          showNotification('Error: ' + error.message, 'error');
+        } finally {
+          document.getElementById('loadingSection').style.display = 'none';
+        }
+      });
+
+      function displayFlashcards(cards) {
+        const container = document.getElementById('flashcardsContainer');
+        container.innerHTML = '';
+
+        if (cards.length === 0) {
+          container.innerHTML = '<p>No flashcards generated. Try adjusting the parameters.</p>';
+          return;
+        }
+
+        cards.forEach((card, index) => {
+          const cardElement = document.createElement('div');
+          cardElement.className = 'flashcard';
+          cardElement.innerHTML = `
+            <div class="flashcard-header">
+              <h4>Card ${index + 1}</h4>
+              ${card.paragraph ? `<span class="paragraph-badge">Paragraph ${card.paragraph}</span>` : ''}
+            </div>
+            <div class="flashcard-content">
+              <div class="flashcard-question">
+                <strong>Question:</strong> ${card.summary}
+              </div>
+              <div class="flashcard-answer">
+                <strong>Answer:</strong> ${card.explanation}
+              </div>
+            </div>
+          `;
+          container.appendChild(cardElement);
+        });
+
+        document.getElementById('resultsSection').style.display = 'block';
+      }
+
+      function showNotification(message, type) {
+        const notification = document.getElementById('notification');
+        const text = document.getElementById('notificationText');
+        
+        text.textContent = message;
+        notification.className = `notification ${type}`;
+        notification.style.display = 'block';
+        
+        setTimeout(() => {
+          notification.style.display = 'none';
+        }, 3000);
+      }
+    </script>
+
+    <style>
+      .file-upload {
+        margin: 20px 0;
+      }
+
+      .file-upload input[type="file"] {
+        display: none;
+      }
+
+      .file-upload-label {
+        display: inline-block;
+        padding: 12px 24px;
+        background: var(--primary);
+        color: white;
+        border-radius: var(--radius);
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+
+      .file-upload-label:hover {
+        background: var(--primary-2);
+      }
+
+      .file-name {
+        margin-left: 10px;
+        color: var(--muted);
+      }
+
+      .options {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 20px;
+        margin: 20px 0;
+        padding: 20px;
+        background: var(--panel-2);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+      }
+
+      .form-group {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .form-group input[type="range"] {
+        width: 100%;
+      }
+
+      .loading-section {
+        text-align: center;
+        padding: 40px;
+      }
+
+      .spinner {
+        width: 40px;
+        height: 40px;
+        border: 4px solid var(--border);
+        border-top: 4px solid var(--primary);
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 20px;
+      }
+
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+
+      .flashcards-container {
+        display: grid;
+        gap: 20px;
+        margin-top: 20px;
+      }
+
+      .flashcard {
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 20px;
+        transition: all 0.2s ease;
+      }
+
+      .flashcard:hover {
+        border-color: var(--primary);
+        box-shadow: var(--shadow);
+      }
+
+      .flashcard-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .paragraph-badge {
+        background: var(--accent);
+        color: white;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+      }
+
+      .flashcard-question {
+        margin-bottom: 15px;
+        font-weight: 500;
+      }
+
+      .flashcard-answer {
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .notification {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 12px 20px;
+        border-radius: var(--radius);
+        color: white;
+        z-index: 1000;
+        display: none;
+      }
+
+      .notification.success {
+        background: var(--accent);
+      }
+
+      .notification.error {
+        background: var(--danger);
+      }
+
+      .notification.info {
+        background: var(--primary);
+      }
+    </style>
+  </body>
 </html>

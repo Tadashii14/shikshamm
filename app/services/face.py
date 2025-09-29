@@ -12,6 +12,7 @@ def _lazy_imports():
         import onnxruntime as ort  # type: ignore
         import insightface  # type: ignore
         import cv2  # type: ignore
+        print("Face recognition dependencies loaded successfully!")
         return ort, insightface, cv2
     except ImportError as e:
         print(f"Face recognition dependencies not available: {e}")
@@ -22,11 +23,13 @@ def _lazy_imports():
 def get_insightface_model():
     ort, insightface, _cv2 = _lazy_imports()
     if ort is None or insightface is None:
+        print("Face recognition model not available - dependencies missing")
         return None
     try:
         providers = ["CPUExecutionProvider"]
         model = insightface.app.FaceAnalysis(name="buffalo_l", providers=providers)
         model.prepare(ctx_id=0, det_size=(320, 320))  # Smaller detection size for speed
+        print("InsightFace model loaded successfully!")
         return model
     except Exception as e:
         print(f"Failed to load InsightFace model: {e}")
