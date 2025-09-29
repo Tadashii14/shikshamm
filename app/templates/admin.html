@@ -28,6 +28,13 @@
         <a href="/timetable" class="nav-link">📅 Study Timetable</a>
         </div>
 
+      <div class="section-status" style="margin: -5px 0 15px 0;">
+        <div class="status-indicator">
+          <span class="status-dot inactive"></span>
+          <span>Face Recognition: Not Available on cloud free-tier</span>
+        </div>
+      </div>
+
       <div class="session-controls">
         <h2>Session Management</h2>
         <div class="row">
@@ -90,6 +97,15 @@
           </div>
         </div>
         </div>
+
+      <div class="footer">
+        <div class="footer-left">AttendAI • Admin</div>
+        <div class="footer-right">
+          <a href="/student" class="footer-link">Student</a>
+          <a href="/health" class="footer-link">Health</a>
+          <a href="/metrics" class="footer-link">Metrics</a>
+        </div>
+      </div>
 
       <div class="student-management-section">
         <h2>Student Management</h2>
@@ -533,5 +549,11 @@
         stopCamera();
       });
     </script>
+    <style>
+      .footer { display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:15px; border-top:1px solid var(--border); color:var(--muted); font-size:.9rem; }
+      .footer-right { display:flex; gap:12px; }
+      .footer-link { color:var(--muted); text-decoration:none; padding:6px 10px; border:1px solid var(--border); border-radius:8px; background:var(--panel); transition:all .2s ease; }
+      .footer-link:hover { color:var(--text); background:var(--primary); border-color:var(--primary-2); }
+    </style>
   </body>
 </html>

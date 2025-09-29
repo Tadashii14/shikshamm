@@ -44,7 +44,7 @@
               <div class="camera-placeholder" id="cameraPlaceholder">
                 <div class="camera-icon">📹</div>
                 <p>Camera will start automatically when session is active</p>
-          </div>
+        </div>
         </div>
           </div>
         </div>
@@ -55,12 +55,12 @@
               <label for="admissionNumber">📋 Admission Number</label>
               <input type="text" id="admissionNumber" placeholder="Enter your admission number" required />
               <div class="input-hint">Your unique student ID</div>
-        </div>
+          </div>
             <div class="form-group">
               <label for="sessionCode">🔑 Session Code</label>
               <input type="text" id="sessionCode" placeholder="Enter session code" required />
               <div class="input-hint">Provided by your teacher</div>
-            </div>
+        </div>
           </div>
           <div class="action-buttons">
             <button id="verifyBtn" class="primary-btn large-btn" disabled>
@@ -492,6 +492,14 @@
         formData.append('num_questions', document.getElementById('quizNumQuestions').value);
         formData.append('difficulty', document.getElementById('quizDifficulty').value);
 
+        const btn = document.getElementById('generateQuizBtn');
+        const spinner = document.getElementById('quizSpinner');
+        const container = document.getElementById('quizContainer');
+        // UI loading state
+        btn.disabled = true; btn.style.opacity = '0.6'; spinner.classList.remove('hidden');
+        container.classList.add('show');
+        container.innerHTML = '<p>Generating quiz…</p>';
+
         try {
           const response = await fetch('/api/advanced/pdf/generate-quiz', {
             method: 'POST',
@@ -501,13 +509,26 @@
           const data = await response.json();
 
           if (data.success) {
-            displayQuiz(data.questions);
+            // Deduplicate by prompt text if any duplicates slipped through
+            const seen = new Set();
+            const unique = [];
+            for (const q of data.questions || []) {
+              const key = (q.prompt || '').trim().toLowerCase();
+              if (!key || seen.has(key)) continue;
+              seen.add(key);
+              unique.push(q);
+            }
+            displayQuiz(unique);
             showNotification(`Generated ${data.questions.length} questions!`, 'success');
           } else {
             showNotification('Error: ' + data.detail, 'error');
+            container.innerHTML = `<p style="color:#ef4444">${data.detail || 'Failed to generate quiz'}</p>`;
           }
         } catch (error) {
           showNotification('Error: ' + error.message, 'error');
+          container.innerHTML = `<p style="color:#ef4444">${error.message}</p>`;
+        } finally {
+          btn.disabled = false; btn.style.opacity = '1'; spinner.classList.add('hidden');
         }
       });
 
@@ -676,7 +697,17 @@
           return;
         }
 
-        cards.forEach((card, index) => {
+        // Deduplicate by question/front text
+        const seenFront = new Set();
+        const filtered = [];
+        for (const c of cards) {
+          const front = (c.front || c.summary || '').trim().toLowerCase();
+          if (!front || seenFront.has(front)) continue;
+          seenFront.add(front);
+          filtered.push(c);
+        }
+
+        filtered.forEach((card, index) => {
           const cardElement = document.createElement('div');
           cardElement.className = 'flashcard';
           cardElement.innerHTML = `
@@ -722,6 +753,13 @@
         while (difficultyLevels.length < subjects.length) difficultyLevels.push('medium');
         difficultyLevels = difficultyLevels.slice(0, subjects.length).map(x => allowed.has(x) ? x : 'medium');
 
+        const btn = document.getElementById('generateTimetableBtn');
+        const spinner = document.getElementById('timetableSpinner');
+        const container = document.getElementById('timetableContainer');
+        btn.disabled = true; btn.style.opacity = '0.6'; spinner.classList.remove('hidden');
+        container.classList.add('show');
+        container.innerHTML = '<p>Generating timetable…</p>';
+
         try {
           const response = await fetch('/api/advanced/timetable/generate', {
             method: 'POST',
@@ -747,6 +785,9 @@
           }
         } catch (error) {
           showNotification('Error: ' + error.message, 'error');
+          container.innerHTML = `<p style=\"color:#ef4444\">${error.message}</p>`;
+        } finally {
+          btn.disabled = false; btn.style.opacity = '1'; spinner.classList.add('hidden');
         }
       });
 
