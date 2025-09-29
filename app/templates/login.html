@@ -88,6 +88,19 @@
       const notification = document.getElementById('notification');
       const notificationText = document.getElementById('notificationText');
 
+      // Preselect title and role based on ?target or localStorage
+      (function syncTarget() {
+        const params = new URLSearchParams(location.search);
+        const directTarget = params.get('target');
+        const storedTarget = localStorage.getItem('landing_target');
+        const target = (directTarget || storedTarget || '').toLowerCase();
+        if (target === 'student') {
+          document.getElementById('pageTitle').textContent = 'Student Login';
+        } else if (target === 'teacher' || target === 'admin') {
+          document.getElementById('pageTitle').textContent = 'Admin/Teacher Login';
+        }
+      })();
+
       // Tab switching
       loginTab.addEventListener('click', () => {
         loginForm.style.display = 'block';

@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AttendAI — Learn smarter</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <style>
+      .hero {
+        min-height: 80vh;
+        display: grid;
+        grid-template-columns: 1.1fr 0.9fr;
+        gap: 30px;
+        align-items: center;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: var(--panel-2);
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+      .title {
+        font-size: clamp(2rem, 4vw, 3rem);
+        margin: 12px 0;
+        line-height: 1.15;
+      }
+      .subtitle {
+        color: var(--muted);
+        margin-bottom: 24px;
+        max-width: 55ch;
+      }
+      .cta-row {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .cta-btn {
+        text-decoration: none;
+        padding: 14px 20px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: var(--primary);
+        color: white;
+        box-shadow: var(--shadow);
+        transition: transform .2s ease, background .2s ease, border-color .2s ease;
+      }
+      .cta-btn.secondary {
+        background: var(--panel-2);
+        color: var(--text);
+      }
+      .cta-btn:hover { transform: translateY(-2px); border-color: var(--primary-2); }
+
+      .feature-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 16px;
+        margin-top: 24px;
+      }
+      .feature {
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 16px;
+      }
+      .footer { display:flex; justify-content:space-between; align-items:center; margin-top:30px; padding-top:15px; border-top:1px solid var(--border); color:var(--muted); }
+      .footer a { color: var(--muted); text-decoration: none; }
+      @media (max-width: 900px) { .hero { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>AttendAI</h1>
+        <div class="user-info">
+          <a class="nav-link" href="/login">Login</a>
+        </div>
+      </div>
+
+      <section class="hero">
+        <div>
+          <div class="badge">✨ AI attendance + study tools</div>
+          <h2 class="title">Manage attendance and study smarter with AI</h2>
+          <p class="subtitle">Face verification (local), quizzes, flashcards, and a Pomodoro-based timetable in a clean dashboard. Pick your role to begin.</p>
+          <div class="cta-row">
+            <a class="cta-btn" href="/login?target=student">I am a Student</a>
+            <a class="cta-btn secondary" href="/login?target=teacher">I am a Teacher/Admin</a>
+          </div>
+
+          <div class="feature-grid">
+            <div class="feature">🧠 Quiz generator with smart dedupe</div>
+            <div class="feature">🎴 Flashcards from your notes</div>
+            <div class="feature">📅 Timetable using Pomodoro</div>
+            <div class="feature">📊 Attendance stats dashboard</div>
+          </div>
+        </div>
+        <div>
+          <img alt="Preview" src="https://images.unsplash.com/photo-1523580846011-d3a5bc25702b?q=80&w=1200&auto=format&fit=crop" style="width:100%; border-radius: 16px; border:1px solid var(--border);"/>
+        </div>
+      </section>
+
+      <div class="footer">
+        <span>© AttendAI</span>
+        <div style="display:flex; gap:12px;">
+          <a href="/health">Health</a>
+          <a href="/metrics">Metrics</a>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // If arriving with target, store intended role for nicer defaults on login
+      const params = new URLSearchParams(location.search);
+      const target = params.get('target');
+      if (target) localStorage.setItem('landing_target', target);
+    </script>
+  </body>
+</html>

@@ -95,7 +95,7 @@ async def metrics():
 # ----------------- Pages -----------------
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request, "title": "AttendAI - Login"})
+    return templates.TemplateResponse("landing.html", {"request": request, "title": "AttendAI — Learn smarter"})
 
 @app.get("/admin", response_class=HTMLResponse)
 def admin_page(request: Request):
