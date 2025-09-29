@@ -28,6 +28,15 @@
           </div>
         </div>
         
+        <div class="footer">
+          <div class="footer-left">AttendAI • Student Portal</div>
+          <div class="footer-right">
+            <a href="/admin" class="footer-link">Admin</a>
+            <a href="/health" class="footer-link">Health</a>
+            <a href="/metrics" class="footer-link">Metrics</a>
+          </div>
+        </div>
+        
         <div class="camera-container">
           <div class="camera-wrapper">
             <video id="camera" autoplay muted playsinline></video>
@@ -1712,6 +1721,40 @@
         .stats-grid {
           grid-template-columns: repeat(2, 1fr);
         }
+      }
+
+      /* Footer */
+      .footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-top: 20px;
+        padding-top: 15px;
+        border-top: 1px solid var(--border);
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .footer-right {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .footer-link {
+        color: var(--muted);
+        text-decoration: none;
+        padding: 6px 10px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--panel);
+        transition: all 0.2s ease;
+      }
+
+      .footer-link:hover {
+        color: var(--text);
+        background: var(--primary);
+        border-color: var(--primary-2);
       }
     </style>
   </body>
