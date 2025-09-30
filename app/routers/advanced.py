@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlmodel import Session, select
 from typing import List, Dict, Optional
+import datetime
 import json
 
 from app.db import get_session
@@ -9,7 +10,7 @@ from app.services.pdf_processor import (
     summarize_main_points, generate_paragraph_flashcards, generate_global_fallback_flashcards,
     build_qa_index, answer_question, generate_moderate_questions, generate_flashcards_from_text
 )
-from app.services.timetable import PomodoroTimetableGenerator, GoogleCalendarIntegrator
+# Avoid importing heavy timetable integrations (pandas) at startup on serverless
 
 router = APIRouter()
 
@@ -193,9 +194,9 @@ async def generate_timetable(
 ):
     """Generate Pomodoro-based study timetable using repository algorithm"""
     try:
-        # Use the repository algorithm
+        # Use the repository algorithm without importing pandas
         from app.services.timetable_repository import generate_timetable_from_repository
-        
+
         result = generate_timetable_from_repository(
             subjects,
             difficulty_levels,
@@ -211,6 +212,7 @@ async def generate_timetable(
 async def get_google_calendar_auth_url():
     """Get Google Calendar authentication URL"""
     try:
+        from app.services.timetable import GoogleCalendarIntegrator
         integrator = GoogleCalendarIntegrator()
         auth_url = integrator.get_auth_url()
         
@@ -242,6 +244,7 @@ async def create_calendar_events(
         start_date_obj = datetime.datetime.fromisoformat(start_date).date()
         
         # Create calendar events
+        from app.services.timetable import GoogleCalendarIntegrator
         integrator = GoogleCalendarIntegrator()
         # Note: This would need proper authentication handling in production
         
