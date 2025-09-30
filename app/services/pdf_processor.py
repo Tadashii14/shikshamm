@@ -2,7 +2,10 @@ import io
 import re
 import string
 import hashlib
-import numpy as np
+try:
+    import numpy as np
+except Exception:
+    np = None
 from typing import List, Dict, Optional, Tuple
 
 # Optional: better PDF extractor (strongly recommended)
@@ -245,20 +248,35 @@ def build_vectorizer(texts: List[str]):
             if t not in vocab:
                 vocab[t] = len(vocab)
         rows.append(counts)
-    mat = np.zeros((len(texts), len(vocab)), dtype=float)
+    if np is None:
+        # Minimal pure-Python vector (dense lists)
+        mat = [[0.0 for _ in range(len(vocab))] for _ in range(len(texts))]
+    else:
+        mat = np.zeros((len(texts), len(vocab)), dtype=float)
     for i, counts in enumerate(rows):
         for t, c in counts.items():
             j = vocab[t]
-            mat[i, j] = c
-        if mat[i].sum() > 0:
-            mat[i] /= (np.linalg.norm(mat[i]) + 1e-9)
+            if np is None:
+                mat[i][j] = float(c)
+            else:
+                mat[i, j] = c
+        if np is None:
+            s = sum(abs(x) for x in mat[i])
+            if s > 0:
+                mat[i] = [x / (s or 1e-9) for x in mat[i]]
+        else:
+            if mat[i].sum() > 0:
+                mat[i] /= (np.linalg.norm(mat[i]) + 1e-9)
     return (vocab, None), mat
 
 def vectorize(vec, texts: List[str]):
     if HAS_SKLEARN and isinstance(vec, TfidfVectorizer):
         return vec.transform(texts)
     vocab, _ = vec
-    mat = np.zeros((len(texts), len(vocab)), dtype=float)
+    if np is None:
+        mat = [[0.0 for _ in range(len(vocab))] for _ in range(len(texts))]
+    else:
+        mat = np.zeros((len(texts), len(vocab)), dtype=float)
     for i, txt in enumerate(texts):
         tokens = [w for w in re.findall(r"[A-Za-z]{2,}", txt.lower()) if w not in STOPWORDS]
         counts = {}
@@ -267,18 +285,45 @@ def vectorize(vec, texts: List[str]):
         for t, c in counts.items():
             if t in vocab:
                 j = vocab[t]
-                mat[i, j] = c
-        if mat[i].sum() > 0:
-            mat[i] /= (np.linalg.norm(mat[i]) + 1e-9)
+                if np is None:
+                    mat[i][j] = float(c)
+                else:
+                    mat[i, j] = c
+        if np is None:
+            s = sum(abs(x) for x in mat[i])
+            if s > 0:
+                mat[i] = [x / (s or 1e-9) for x in mat[i]]
+        else:
+            if mat[i].sum() > 0:
+                mat[i] /= (np.linalg.norm(mat[i]) + 1e-9)
     return mat
 
 def cos_sim(A, B):
     if HAS_SKLEARN and "csr_matrix" in str(type(A)):
         return cosine_similarity(A, B)
-    if A.ndim == 1: A = A.reshape(1, -1)
-    if B.ndim == 1: B = B.reshape(1, -1)
-    denom = (np.linalg.norm(A, axis=1, keepdims=True) + 1e-9) * (np.linalg.norm(B, axis=1, keepdims=True) + 1e-9)
-    return (A @ B.T) / denom
+    if np is None:
+        # Simple cosine for lists
+        def norm(v):
+            return sum(x*x for x in v) ** 0.5
+        if isinstance(A[0], (int, float)):
+            A = [A]
+        if isinstance(B[0], (int, float)):
+            B = [B]
+        out = []
+        for a in A:
+            row = []
+            na = norm(a) + 1e-9
+            for b in B:
+                nb = norm(b) + 1e-9
+                dot = sum(x*y for x,y in zip(a,b))
+                row.append(dot / (na * nb))
+            out.append(row)
+        return out
+    else:
+        if A.ndim == 1: A = A.reshape(1, -1)
+        if B.ndim == 1: B = B.reshape(1, -1)
+        denom = (np.linalg.norm(A, axis=1, keepdims=True) + 1e-9) * (np.linalg.norm(B, axis=1, keepdims=True) + 1e-9)
+        return (A @ B.T) / denom
 
 
 # -------------------- SUMMARY (GLOBAL MAIN POINTS) --------------------
