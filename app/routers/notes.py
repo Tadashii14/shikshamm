@@ -4,7 +4,7 @@ from typing import List
 
 from app.db import get_session
 from app.models import Note, Flashcard
-from app.services.llm import generate_flashcards_from_text, generate_quiz_from_text
+# Avoid importing OpenAI-dependent code at startup on serverless
 
 
 router = APIRouter(prefix="/notes", tags=["notes"]) 
@@ -42,6 +42,7 @@ def generate_flashcards(note_id: int = Form(...), max_cards: int = Form(12), ses
     if not note or not note.text:
         raise HTTPException(status_code=404, detail="Note not found or empty")
     try:
+        from app.services.llm import generate_flashcards_from_text
         cards = generate_flashcards_from_text(note.text, max_cards=max_cards)
     except Exception as e:
         # fallback: create one summary card to avoid UI hanging
@@ -67,6 +68,7 @@ def generate_quiz(note_id: int = Form(...), num_questions: int = Form(8), sessio
     if not note or not note.text:
         raise HTTPException(status_code=404, detail="Note not found or empty")
     try:
+        from app.services.llm import generate_quiz_from_text
         quiz = generate_quiz_from_text(note.text, num_questions=num_questions)
     except Exception as e:
         quiz = [{"question": "Quiz generation unavailable", "options": ["OK"], "answer": "OK", "error": str(e)}]
