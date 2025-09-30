@@ -3,14 +3,16 @@ from __future__ import annotations
 import os
 from typing import List
 
-from openai import OpenAI
 
-
-def _get_client() -> OpenAI:
+def _get_client():
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY not set")
     # Use env var; set timeouts per-request via with_options()
+    try:
+        from openai import OpenAI  # lazy import to avoid hard dependency on Vercel
+    except Exception as e:
+        raise RuntimeError(f"OpenAI client unavailable: {e}")
     return OpenAI()
 
 
