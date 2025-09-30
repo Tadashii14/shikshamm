@@ -4,7 +4,10 @@ import io
 from functools import lru_cache
 from typing import Optional, Tuple
 
-import numpy as np
+try:
+    import numpy as np
+except Exception:
+    np = None  # type: ignore
 
 
 def _lazy_imports():
@@ -36,9 +39,11 @@ def get_insightface_model():
         return None
 
 
-def _read_image_from_bytes(image_bytes: bytes) -> Optional[np.ndarray]:
+def _read_image_from_bytes(image_bytes: bytes):
     try:
         import cv2  # type: ignore
+        if np is None:
+            return None
         image_array = np.frombuffer(image_bytes, dtype=np.uint8)
         image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
         if image is None:
@@ -55,7 +60,7 @@ def _read_image_from_bytes(image_bytes: bytes) -> Optional[np.ndarray]:
         return None
 
 
-def compute_face_embedding(image_bytes: bytes) -> Optional[np.ndarray]:
+def compute_face_embedding(image_bytes: bytes):
     try:
         image = _read_image_from_bytes(image_bytes)
         if image is None:
@@ -72,13 +77,23 @@ def compute_face_embedding(image_bytes: bytes) -> Optional[np.ndarray]:
         emb = face.normed_embedding
         if emb is None:
             return None
+        if np is None:
+            return None
         return np.array(emb, dtype=np.float32)
     except Exception as e:
         print(f"Face embedding computation failed: {e}")
         return None
 
 
-def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+def cosine_similarity(a, b) -> float:
+    if np is None:
+        # Simple pure-Python cosine
+        def norm(v):
+            return sum(x*x for x in v) ** 0.5
+        na = norm(a) + 1e-8
+        nb = norm(b) + 1e-8
+        dot = sum(float(x) * float(y) for x, y in zip(a, b))
+        return float(dot / (na * nb))
     a_norm = a / (np.linalg.norm(a) + 1e-8)
     b_norm = b / (np.linalg.norm(b) + 1e-8)
     return float(np.dot(a_norm, b_norm))

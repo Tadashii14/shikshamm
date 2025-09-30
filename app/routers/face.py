@@ -1,7 +1,10 @@
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Header, WebSocket
 from sqlmodel import Session, select
-import numpy as np
 import os
+try:
+    import numpy as np  # Optional on Vercel
+except Exception:
+    np = None  # type: ignore
 
 from app.db import get_session
 from app.models import User, AttendanceSession, Attendance
@@ -61,7 +64,9 @@ async def verify_and_mark(code: str = Form(...), user_id: int = Form(...), file:
         user = session.get(User, user_id)
         if not user or not user.face_embedding:
             raise HTTPException(status_code=400, detail="User not enrolled")
-        user_emb = np.array(user.face_embedding, dtype=np.float32)
+        user_emb = (
+            np.array(user.face_embedding, dtype=np.float32) if np is not None else list(map(float, user.face_embedding))
+        )
         sim = cosine_similarity(emb, user_emb)
         if sim < 0.35:
             raise HTTPException(status_code=401, detail="Face mismatch")
@@ -108,7 +113,9 @@ async def auto_identify_and_mark(code: str = Form(...), file: UploadFile = File(
         best_sim = -1.0
         for u in users:
             try:
-                uemb = np.array(u.face_embedding, dtype=np.float32)
+                uemb = (
+                    np.array(u.face_embedding, dtype=np.float32) if np is not None else list(map(float, u.face_embedding))
+                )
                 s = cosine_similarity(emb, uemb)
                 if s > best_sim:
                     best_sim = s
@@ -167,7 +174,9 @@ async def verify_by_admission(admission_number: str = Form(...), code: str = For
             raise HTTPException(status_code=404, detail="Student with this admission number not found")
         if user.face_embedding is None:
             raise HTTPException(status_code=400, detail="Student face not enrolled yet")
-        user_emb = np.array(user.face_embedding, dtype=np.float32)
+        user_emb = (
+            np.array(user.face_embedding, dtype=np.float32) if np is not None else list(map(float, user.face_embedding))
+        )
         sim = cosine_similarity(emb, user_emb)
         if sim < 0.35:
             raise HTTPException(status_code=401, detail="Face verification failed - similarity too low")
