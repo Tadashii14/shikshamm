@@ -10,11 +10,22 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 
 @router.post("/classes")
-def create_class(name: str, code: str, created_by_user_id: int, session: Session = Depends(get_session)):
+def create_class(name: str, code: str, created_by_user_id: int | None = None, session: Session = Depends(get_session)):
     existing = session.exec(select(ClassRoom).where(ClassRoom.code == code)).first()
     if existing:
         return existing  # Return existing class instead of error
-    cls = ClassRoom(name=name, code=code, created_by_user_id=created_by_user_id)
+    # Ensure a valid admin exists; if not provided or invalid, create/get default admin
+    admin_user = None
+    if created_by_user_id:
+        admin_user = session.exec(select(User).where(User.id == created_by_user_id)).first()
+    if not admin_user:
+        admin_user = session.exec(select(User).where(User.role == "admin")).first()
+        if not admin_user:
+            admin_user = User(email="admin@local", full_name="Default Admin", role="admin", hashed_password="")
+            session.add(admin_user)
+            session.commit()
+            session.refresh(admin_user)
+    cls = ClassRoom(name=name, code=code, created_by_user_id=admin_user.id)
     session.add(cls)
     session.commit()
     session.refresh(cls)
