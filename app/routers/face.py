@@ -10,7 +10,7 @@ from app.db import get_session
 from app.models import User, AttendanceSession, Attendance
 from app.services.face import compute_face_embedding, cosine_similarity
 
-router = APIRouter(prefix="/face", tags=["face"])
+router = APIRouter(prefix="/face", tags=["face"]) 
 
 # WebSocket clients storage
 connected_clients = {}
@@ -101,7 +101,8 @@ async def auto_identify_and_mark(code: str = Form(...), file: UploadFile = File(
         data = await file.read()
         emb = compute_face_embedding(data)
         if emb is None:
-            raise HTTPException(status_code=400, detail="No face detected")
+            # Gracefully degrade on cloud/free-tier where face model may be unavailable
+            return {"message": "Face recognition not available"}
         sess = session.exec(
             select(AttendanceSession).where(AttendanceSession.code == code, AttendanceSession.is_active == True)
         ).first()
@@ -216,7 +217,7 @@ async def get_attendance(user_id: int, session: Session = Depends(get_session)):
         sess = session.get(AttendanceSession, att.session_id)
         result.append({
             "session_code": sess.code,
-            "marked_at": att.created_at,
+            "marked_at": att.timestamp,
             "status": att.status
         })
     return result
