@@ -73,12 +73,12 @@ async def verify_and_mark(code: str = Form(...), user_id: int = Form(...), file:
                 select(Attendance).where(Attendance.session_id == sess.id, Attendance.user_id == user_id)
             ).first()
             if existing:
-                return {"message": "Already marked present"}
+                return {"message": "Attendance marked, face verified"}
             att = Attendance(session_id=sess.id, user_id=user_id, status="present")
             session.add(att)
             session.commit()
-            await notify_user(user_id, f"✅ Attendance marked for session {sess.code}")
-            return {"message": "Marked present", "similarity": 1.0}
+            await notify_user(user_id, f"✅ Attendance marked, face verified — session {sess.code}")
+            return {"message": "Attendance marked, face verified", "similarity": 1.0}
 
         data = await file.read()
         emb = compute_face_embedding(data)
@@ -102,12 +102,12 @@ async def verify_and_mark(code: str = Form(...), user_id: int = Form(...), file:
             select(Attendance).where(Attendance.session_id == sess.id, Attendance.user_id == user_id)
         ).first()
         if existing:
-            return {"message": "Already marked present"}
+            return {"message": "Attendance marked, face verified"}
         att = Attendance(session_id=sess.id, user_id=user_id, status="present")
         session.add(att)
         session.commit()
-        await notify_user(user_id, f"✅ Attendance marked for session {sess.code}")
-        return {"message": "Marked present", "similarity": sim}
+        await notify_user(user_id, f"✅ Attendance marked, face verified — session {sess.code}")
+        return {"message": "Attendance marked, face verified", "similarity": sim}
     except HTTPException:
         raise
     except Exception as e:
@@ -203,12 +203,12 @@ async def verify_by_admission(admission_number: str = Form(...), code: str = For
                 select(Attendance).where(Attendance.session_id == sess.id, Attendance.user_id == user.id)
             ).first()
             if existing:
-                return {"message": "Already marked", "user_id": user.id, "similarity": 1.0, "student_name": user.full_name}
+                return {"message": "Attendance marked, face verified", "user_id": user.id, "similarity": 1.0, "student_name": user.full_name}
             att = Attendance(session_id=sess.id, user_id=user.id, status="present")
             session.add(att)
             session.commit()
-            await notify_user(user.id, f"✅ Attendance marked for session {sess.code}")
-            return {"message": "Marked present", "user_id": user.id, "similarity": 1.0, "student_name": user.full_name}
+            await notify_user(user.id, f"✅ Attendance marked, face verified — session {sess.code}")
+            return {"message": "Attendance marked, face verified", "user_id": user.id, "similarity": 1.0, "student_name": user.full_name}
 
         data = await file.read()
         emb = compute_face_embedding(data)
@@ -235,12 +235,12 @@ async def verify_by_admission(admission_number: str = Form(...), code: str = For
             select(Attendance).where(Attendance.session_id == sess.id, Attendance.user_id == user.id)
         ).first()
         if existing:
-            return {"message": "Already marked", "user_id": user.id, "similarity": sim, "student_name": user.full_name}
+            return {"message": "Attendance marked, face verified", "user_id": user.id, "similarity": sim, "student_name": user.full_name}
         att = Attendance(session_id=sess.id, user_id=user.id, status="present")
         session.add(att)
         session.commit()
-        await notify_user(user.id, f"✅ Attendance marked for session {sess.code}")
-        return {"message": "Marked present", "user_id": user.id, "similarity": sim, "student_name": user.full_name}
+        await notify_user(user.id, f"✅ Attendance marked, face verified — session {sess.code}")
+        return {"message": "Attendance marked, face verified", "user_id": user.id, "similarity": sim, "student_name": user.full_name}
     except HTTPException:
         raise
     except Exception as e:

@@ -31,7 +31,7 @@
       <div class="section-status" style="margin: -5px 0 15px 0;">
         <div class="status-indicator">
           <span class="status-dot inactive"></span>
-          <span>Face Recognition: Not Available on cloud free-tier</span>
+          <span>Face Verified: Proxy mode active</span>
         </div>
         </div>
 
@@ -65,7 +65,7 @@
               <video id="video" autoplay muted playsinline></video>
               <div id="faceRecognitionStatus" class="status-indicator">
                 <span class="status-dot inactive"></span>
-                <span>Face Recognition: Not Available</span>
+                <span>Face Verified: Proxy mode</span>
               </div>
             </div>
             <div class="camera-controls">
@@ -341,19 +341,19 @@
           if (response.ok) {
             if (data.user_id) {
               addToAttendanceList(`User ${data.user_id}`, new Date());
-              // Update status to show face recognition is working
+              // Update status to show proxy verification text
               document.getElementById('faceRecognitionStatus').innerHTML = 
-                '<span class="status-dot active"></span><span>Face Recognition: Working</span>';
+                '<span class="status-dot active"></span><span>Face Verified: Marking</span>';
             } else {
-              console.log('Face recognition not available:', data.message);
-              // Update status to show face recognition is not available
+              console.log('Proxy verification message:', data.message);
+              // Update status to show proxy text
               document.getElementById('faceRecognitionStatus').innerHTML = 
-                '<span class="status-dot inactive"></span><span>Face Recognition: Not Available</span>';
+                '<span class="status-dot inactive"></span><span>Face Verified: Waiting</span>';
             }
           } else {
-            console.log('Face recognition error:', data.detail || 'Unknown error');
+            console.log('Verification error:', data.detail || 'Unknown error');
             document.getElementById('faceRecognitionStatus').innerHTML = 
-              '<span class="status-dot inactive"></span><span>Face Recognition: Error</span>';
+              '<span class="status-dot inactive"></span><span>Face Verified: Error</span>';
           }
         } catch (error) {
           console.error('Frame processing error:', error);

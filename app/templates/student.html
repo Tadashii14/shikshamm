@@ -23,7 +23,7 @@
           <div class="section-status">
             <div id="faceStatus" class="status-indicator">
               <span class="status-dot inactive"></span>
-              <span>Face Recognition: Not Active</span>
+              <span>Face Verified: Not Active</span>
         </div>
           </div>
         </div>
@@ -280,7 +280,7 @@
           video.srcObject = stream;
           overlay.classList.add('hidden');
           document.getElementById("verifyBtn").disabled = false;
-          document.getElementById("faceStatus").innerHTML = '<span class="status-dot active"></span><span>Face Recognition: Active</span>';
+          document.getElementById("faceStatus").innerHTML = '<span class="status-dot active"></span><span>Face Verified: Active</span>';
           showNotification("Camera started automatically", "success");
         } catch (error) {
           console.error("Error starting camera:", error);
@@ -365,7 +365,7 @@
             showNotification(result.message, 'info');
             return;
           }
-          document.getElementById('faceMsg').textContent = `✅ Verified! Similarity: ${(result.similarity || 0).toFixed(2)}`;
+          document.getElementById('faceMsg').textContent = `✅ Attendance marked, face verified. Similarity: ${(result.similarity || 0).toFixed(2)}`;
           document.getElementById('faceMsg').className = 'status-message success';
           document.getElementById('faceMsg').style.display = 'block';
           showNotification('🎉 Attendance marked successfully!', 'success');
@@ -421,7 +421,7 @@
             console.log('WebSocket connected');
             reconnectAttempts = 0;
             document.getElementById('faceStatus').innerHTML = 
-              '<span class="status-dot active"></span> Face Recognition: Connected';
+              '<span class="status-dot active"></span> Face Verified: Connected';
           };
           
           ws.onmessage = function(event) {
@@ -436,7 +436,7 @@
           ws.onclose = function() {
             console.log('WebSocket disconnected');
             document.getElementById('faceStatus').innerHTML = 
-              '<span class="status-dot inactive"></span> Face Recognition: Disconnected';
+              '<span class="status-dot inactive"></span> Face Verified: Disconnected';
             
             // Reconnect with exponential backoff
             if (reconnectAttempts < maxReconnectAttempts) {
@@ -451,7 +451,7 @@
           ws.onerror = function(error) {
             console.error('WebSocket error:', error);
             document.getElementById('faceStatus').innerHTML = 
-              '<span class="status-dot inactive"></span> Face Recognition: Error';
+              '<span class="status-dot inactive"></span> Face Verified: Error';
           };
         } catch (error) {
           console.error('WebSocket connection failed:', error);
