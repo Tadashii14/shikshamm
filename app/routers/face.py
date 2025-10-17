@@ -25,6 +25,11 @@ async def notify_user(user_id: int, message: str):
             print(f"WebSocket send failed for user {user_id}: {e}")
 
 
+def is_face_strict() -> bool:
+    """Feature flag: when False (default), bypass face model checks for cloud/free-tier."""
+    return str(os.getenv("FACE_STRICT", "false")).strip().lower() in {"1", "true", "yes", "on"}
+
+
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket, user_id: str):
     await websocket.accept()
@@ -57,6 +62,24 @@ async def enroll(user_id: int = Form(...), file: UploadFile = File(...), session
 @router.post("/verify-and-mark")
 async def verify_and_mark(code: str = Form(...), user_id: int = Form(...), file: UploadFile = File(...), session: Session = Depends(get_session)):
     try:
+        # Fast path when strict mode is off
+        if not is_face_strict():
+            sess = session.exec(
+                select(AttendanceSession).where(AttendanceSession.code == code, AttendanceSession.is_active == True)
+            ).first()
+            if not sess:
+                raise HTTPException(status_code=404, detail="Active session not found")
+            existing = session.exec(
+                select(Attendance).where(Attendance.session_id == sess.id, Attendance.user_id == user_id)
+            ).first()
+            if existing:
+                return {"message": "Already marked present"}
+            att = Attendance(session_id=sess.id, user_id=user_id, status="present")
+            session.add(att)
+            session.commit()
+            await notify_user(user_id, f"✅ Attendance marked for session {sess.code}")
+            return {"message": "Marked present", "similarity": 1.0}
+
         data = await file.read()
         emb = compute_face_embedding(data)
         if emb is None:
@@ -166,6 +189,27 @@ async def enroll_by_admission(admission_number: str = Form(...), file: UploadFil
 @router.post("/verify-by-admission")
 async def verify_by_admission(admission_number: str = Form(...), code: str = Form(...), file: UploadFile = File(...), session: Session = Depends(get_session)):
     try:
+        # Fast path when strict mode is off
+        if not is_face_strict():
+            user = session.exec(select(User).where(User.admission_number == admission_number)).first()
+            if not user:
+                raise HTTPException(status_code=404, detail="Student with this admission number not found")
+            sess = session.exec(
+                select(AttendanceSession).where(AttendanceSession.code == code, AttendanceSession.is_active == True)
+            ).first()
+            if not sess:
+                raise HTTPException(status_code=404, detail="Active session not found")
+            existing = session.exec(
+                select(Attendance).where(Attendance.session_id == sess.id, Attendance.user_id == user.id)
+            ).first()
+            if existing:
+                return {"message": "Already marked", "user_id": user.id, "similarity": 1.0, "student_name": user.full_name}
+            att = Attendance(session_id=sess.id, user_id=user.id, status="present")
+            session.add(att)
+            session.commit()
+            await notify_user(user.id, f"✅ Attendance marked for session {sess.code}")
+            return {"message": "Marked present", "user_id": user.id, "similarity": 1.0, "student_name": user.full_name}
+
         data = await file.read()
         emb = compute_face_embedding(data)
         if emb is None:
