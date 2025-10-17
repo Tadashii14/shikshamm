@@ -383,10 +383,18 @@
           }
         } catch (error) {
           console.error("Error verifying attendance:", error);
-          document.getElementById('faceMsg').textContent = `❌ Error: ${error.message}`;
-          document.getElementById('faceMsg').className = 'status-message error';
-          document.getElementById('faceMsg').style.display = 'block';
-          showNotification("Error verifying attendance: " + error.message, "error");
+          const msg = String(error && error.message ? error.message : 'Verification failed');
+          if (msg.toLowerCase().includes('no face')) {
+            document.getElementById('faceMsg').textContent = `ℹ️ ${msg}. Please align your face and try again.`;
+            document.getElementById('faceMsg').className = 'status-message';
+            document.getElementById('faceMsg').style.display = 'block';
+            showNotification(msg, 'info');
+          } else {
+            document.getElementById('faceMsg').textContent = `❌ Error: ${msg}`;
+            document.getElementById('faceMsg').className = 'status-message error';
+            document.getElementById('faceMsg').style.display = 'block';
+            showNotification("Error verifying attendance: " + msg, "error");
+          }
         } finally {
           // Hide loading state
           verifyBtn.disabled = false;
