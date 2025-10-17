@@ -25,7 +25,17 @@ def create_class(name: str, code: str, created_by_user_id: int, session: Session
 def start_session(class_code: str, code: str, subject: str | None = None, session: Session = Depends(get_session)):
     cls = session.exec(select(ClassRoom).where(ClassRoom.code == class_code)).first()
     if not cls:
-        raise HTTPException(status_code=404, detail="Class not found")
+        # Auto-provision a default admin and class if missing so the UI works out-of-the-box
+        admin_user = session.exec(select(User).where(User.role == "admin")).first()
+        if not admin_user:
+            admin_user = User(email="admin@local", full_name="Default Admin", role="admin", hashed_password="")
+            session.add(admin_user)
+            session.commit()
+            session.refresh(admin_user)
+        cls = ClassRoom(name="Auto Class", code=class_code, created_by_user_id=admin_user.id)
+        session.add(cls)
+        session.commit()
+        session.refresh(cls)
     
     # Stop any existing active session for this class
     active_sessions = session.exec(select(AttendanceSession).where(AttendanceSession.class_id == cls.id, AttendanceSession.is_active == True)).all()  # noqa: E712
@@ -75,7 +85,7 @@ def create_student(email: str, full_name: str, admission_number: str | None = No
 @router.get("/students/list")
 def list_students(session: Session = Depends(get_session)):
     users = session.exec(select(User).where(User.role == "student")).all()
-    return [{"id": u.id, "email": u.email, "full_name": u.full_name} for u in users]
+    return [{"id": u.id, "email": u.email, "full_name": u.full_name, "admission_number": u.admission_number} for u in users]
 
 
 @router.post("/attendance/manual")
