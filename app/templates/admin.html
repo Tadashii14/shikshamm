@@ -33,7 +33,7 @@
           <span class="status-dot inactive"></span>
           <span>Face Recognition: Not Available on cloud free-tier</span>
         </div>
-      </div>
+        </div>
 
       <div class="session-controls">
         <h2>Session Management</h2>
@@ -105,7 +105,7 @@
           <a href="/health" class="footer-link">Health</a>
           <a href="/metrics" class="footer-link">Metrics</a>
         </div>
-      </div>
+        </div>
 
       <div class="student-management-section">
         <h2>Student Management</h2>
@@ -207,9 +207,14 @@
         }
         
         try {
-          // Create or get the AUTO class
-          await fetch('/admin/classes?name=Auto Class&code=AUTO&created_by_user_id=1', { method: 'POST' });
-          
+          // Create or get the AUTO class (encode name to avoid URL issues)
+          const classResp = await fetch(`/admin/classes?name=${encodeURIComponent('Auto Class')}&code=AUTO&created_by_user_id=1`, { method: 'POST' });
+          if (!classResp.ok) {
+            const err = await classResp.text();
+            showNotification(`Failed to ensure class: ${err || classResp.status}`, 'error');
+            return;
+          }
+
           // Start session
           const response = await fetch(`/admin/sessions/start?class_code=AUTO&code=${encodeURIComponent(code)}&subject=${encodeURIComponent(subject)}`, { method: 'POST' });
           
