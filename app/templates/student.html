@@ -345,12 +345,26 @@
             body: formData
           });
 
-          if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || 'Verification failed');
-          }
-
           const result = await response.json();
+          if (!response.ok) {
+            // If backend returned graceful message for no face, show info instead of error
+            const detail = result && result.detail ? result.detail : (result && result.message ? result.message : 'Verification failed');
+            if ((detail || '').toLowerCase().includes('no face')) {
+              document.getElementById('faceMsg').textContent = `ℹ️ ${detail}. Please align your face in the frame and try again.`;
+              document.getElementById('faceMsg').className = 'status-message';
+              document.getElementById('faceMsg').style.display = 'block';
+              showNotification(detail, 'info');
+              return;
+            }
+            throw new Error(detail);
+          }
+          if (result && result.message && result.message.toLowerCase().includes('no face')) {
+            document.getElementById('faceMsg').textContent = `ℹ️ ${result.message}. Please align your face in the frame and try again.`;
+            document.getElementById('faceMsg').className = 'status-message';
+            document.getElementById('faceMsg').style.display = 'block';
+            showNotification(result.message, 'info');
+            return;
+          }
           document.getElementById('faceMsg').textContent = `✅ Verified! Similarity: ${(result.similarity || 0).toFixed(2)}`;
           document.getElementById('faceMsg').className = 'status-message success';
           document.getElementById('faceMsg').style.display = 'block';

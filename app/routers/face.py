@@ -169,7 +169,8 @@ async def verify_by_admission(admission_number: str = Form(...), code: str = For
         data = await file.read()
         emb = compute_face_embedding(data)
         if emb is None:
-            raise HTTPException(status_code=400, detail="No face detected")
+            # Graceful response to avoid frontend error toasts on cloud/free-tier
+            return {"message": "No face detected", "similarity": 0.0}
         user = session.exec(select(User).where(User.admission_number == admission_number)).first()
         if not user:
             raise HTTPException(status_code=404, detail="Student with this admission number not found")
