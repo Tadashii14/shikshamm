@@ -27,4 +27,5 @@ temp-repo/
 
 .cache/
 .pytest_cache/
+*.db
 

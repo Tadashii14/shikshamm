@@ -6,11 +6,8 @@
     <title>Admin Dashboard</title>
     <link rel="stylesheet" href="/static/styles.css" />
     
-    <!-- Firebase SDKs -->
-    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-  </head>
+    
+</head>
   <body>
     <div class="container">
       <div class="header">
@@ -156,46 +153,23 @@
     </div>
 
     <script>
-      // Firebase config
-      const firebaseConfig = {
-        apiKey: "AIzaSyBI9FWOhqfS6e1aHpC_guvx1r_zy14cobk",
-        authDomain: "attendance-system-a1ac4.firebaseapp.com",
-        projectId: "attendance-system-a1ac4",
-        storageBucket: "attendance-system-a1ac4.firebasestorage.app",
-        messagingSenderId: "462766302633",
-        appId: "1:462766302633:web:b45441d758dc007c4250b8",
-        measurementId: "G-2MMSHHN4CK"
-      };
-
-      // Initialize Firebase
-      if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
-      const auth = firebase.auth();
-      const db = firebase.firestore();
-
       let currentSession = null;
       let video = null;
       let adminStream = null;
       let adminLoop = null;
 
-      // Check authentication
-      auth.onAuthStateChanged(user => {
-        if (!user) {
-          location.href = "/login";
+      // Demo auth guard: teacher portal login is stored client-side only.
+      // No Firebase, no backend check. Works for demo mode.
+      (function checkAccess() {
+        const role = localStorage.getItem('role');
+        if (role !== 'teacher' && role !== 'admin') {
+          alert('Access denied. Teacher role required.');
+          location.href = '/login?target=teacher';
           return;
         }
-        
-        const role = localStorage.getItem("role");
-        if (role !== "teacher" && role !== "admin") {
-          alert("Access denied. Teacher role required.");
-          location.href = "/login";
-          return;
-        }
-        
-        document.getElementById("userEmail").textContent = user.email;
-        
-        // Set admin key for API calls
+        document.getElementById('userEmail').textContent = localStorage.getItem('userEmail') || 'Teacher';
         localStorage.setItem('ADMIN_KEY', 'super-secret-key');
-      });
+      })();
 
       async function startSession() {
         const code = document.getElementById('sessionCode').value;
@@ -537,10 +511,8 @@
       }
 
       function logout() {
-        auth.signOut().then(() => {
-          localStorage.clear();
-          location.href = "/login";
-        });
+        localStorage.clear();
+        location.href = "/login";
       }
 
       // Initialize page

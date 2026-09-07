@@ -7,9 +7,7 @@
     <link rel="stylesheet" href="/static/styles.css" />
     
     <!-- Firebase SDKs -->
-    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+    
   </head>
   <body>
     <div class="container">
@@ -86,37 +84,13 @@
     </div>
 
     <script>
-      // Firebase configuration
-      const firebaseConfig = {
-        apiKey: "AIzaSyBXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
-        authDomain: "attendai-xxxxx.firebaseapp.com",
-        projectId: "attendai-xxxxx",
-        storageBucket: "attendai-xxxxx.appspot.com",
-        messagingSenderId: "123456789",
-        appId: "1:123456789:web:abcdefghijklmnop"
-      };
-
-      // Initialize Firebase
-      firebase.initializeApp(firebaseConfig);
-      const auth = firebase.auth();
-      const db = firebase.firestore();
-
-      let currentUser = null;
-
-      // Authentication
-      auth.onAuthStateChanged((user) => {
-        if (user) {
-          currentUser = user;
-          document.getElementById('userEmail').textContent = user.email;
-        } else {
-          window.location.href = '/login';
-        }
-      });
+      // Demo mode: no Firebase — identity comes from the login page.
+      let currentUser = { email: localStorage.getItem('userEmail') || 'User' };
+      document.getElementById('userEmail').textContent = currentUser.email;
 
       function logout() {
-        auth.signOut().then(() => {
-          window.location.href = '/login';
-        });
+        localStorage.clear();
+        window.location.href = '/login';
       }
 
       // File upload handling
