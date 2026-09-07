@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Health checks and monitoring with Prometheus metrics
 """

@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Rate limiting middleware using slowapi
 """

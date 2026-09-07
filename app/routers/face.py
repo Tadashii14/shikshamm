@@ -1,3 +1,4 @@
+from __future__ import annotations
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Header, WebSocket
 from sqlmodel import Session, select
 import os
