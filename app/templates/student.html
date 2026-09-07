@@ -461,8 +461,9 @@
       // Load Attendance Statistics
       async function loadAttendanceStats() {
         try {
-          // For demo purposes, using user ID 1 - in real app, this would be the logged-in user's ID
-          const response = await fetch('/admin/attendance/stats/1');
+          // Use the real student user id when available (set after a successful mark), else demo fallback 1
+          const uid = localStorage.getItem('ATTENDAI_USER_ID') || '1';
+          const response = await fetch(`/admin/attendance/stats/${uid}`);
           if (response.ok) {
             const stats = await response.json();
             document.getElementById('totalSessions').textContent = stats.total_sessions;

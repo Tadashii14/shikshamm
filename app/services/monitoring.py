@@ -87,7 +87,7 @@ class HealthChecker:
                 }
             else:
                 return {
-                    "status": "unhealthy",
+                    "status": "degraded",  # optional component on cloud/free-tier deployments
                     "message": "Face recognition model not available"
                 }
         except Exception as e:

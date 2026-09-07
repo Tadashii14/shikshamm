@@ -1,6 +1,6 @@
 from __future__ import annotations
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import Session, select
 
 from app.db import get_session
@@ -101,22 +101,52 @@ def list_students(session: Session = Depends(get_session)):
 
 
 @router.post("/attendance/manual")
-def mark_manual_attendance(user_id: int, session_code: str, status: str, session: Session = Depends(get_session)):
+async def mark_manual_attendance(request: Request, session: Session = Depends(get_session)):
+    """Mark attendance manually.
+
+    Accepts a JSON body (admin.html sends {user_id, session_code, status}),
+    form data, or query parameters — whichever the client uses.
+    """
+    ct = request.headers.get("content-type", "").lower()
+    if "application/json" in ct:
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+    else:
+        try:
+            body = dict(await request.form())
+        except Exception:
+            body = {}
+    # Fall back to query params for scalar-style clients
+    get = lambda k, alt=None: body.get(k) if body.get(k) is not None else (request.query_params.get(k) if request.query_params.get(k) is not None else alt)  # noqa: E731
+
+    user_id_raw = get("user_id")
+    session_code = get("session_code")
+    status = get("status", "present")
+
+    try:
+        user_id = int(user_id_raw)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="user_id must be an integer")
+    if not session_code:
+        raise HTTPException(status_code=422, detail="session_code is required")
+
     # Find the session
     sess = session.exec(select(AttendanceSession).where(AttendanceSession.code == session_code, AttendanceSession.is_active == True)).first()  # noqa: E712
     if not sess:
         raise HTTPException(status_code=404, detail="Active session not found")
-    
+
     # Check if already marked
     existing = session.exec(select(Attendance).where(Attendance.session_id == sess.id, Attendance.user_id == user_id)).first()
     if existing:
         return {"message": "Already marked", "user_id": user_id}
-    
+
     # Mark attendance
     att = Attendance(session_id=sess.id, user_id=user_id, status=status)
     session.add(att)
     session.commit()
-    
+
     return {"message": "Marked present", "user_id": user_id}
 
 
@@ -143,7 +173,7 @@ def get_attendance_stats(user_id: int, session: Session = Depends(get_session)):
         select(Attendance)
         .join(AttendanceSession)
         .where(Attendance.user_id == user_id, Attendance.status == "present")
-        .order_by(Attendance.created_at.desc())
+        .order_by(Attendance.timestamp.desc())
         .limit(1)
     ).first()
     

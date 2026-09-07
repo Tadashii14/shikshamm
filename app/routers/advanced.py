@@ -1,5 +1,5 @@
 from __future__ import annotations
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
 from sqlmodel import Session, select
 from typing import List, Dict, Optional
 import datetime
@@ -41,6 +41,8 @@ async def extract_pdf_text(file: UploadFile = File(...)):
             "sentence_count": len(sentences),
             "preview": cleaned_text[:500] + "..." if len(cleaned_text) > 500 else cleaned_text
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing PDF: {str(e)}")
 
@@ -71,6 +73,8 @@ async def summarize_pdf(
             "summary": summary,
             "sentence_count": len(summary)
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error summarizing PDF: {str(e)}")
 
@@ -116,6 +120,8 @@ async def generate_flashcards(
             "cards": cards,
             "total_cards": len(cards)
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating flashcards: {str(e)}")
 
@@ -145,6 +151,8 @@ async def generate_quiz(
             "questions": questions,
             "total_questions": len(questions)
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating quiz: {str(e)}")
 
@@ -183,32 +191,109 @@ async def ask_question(
             "answer": result["answer"],
             "sources": result["sources"]
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error answering question: {str(e)}")
 
 
 @router.post("/timetable/generate")
-async def generate_timetable(
-    subjects: List[str] = Form(...),
-    difficulty_levels: List[str] = Form(...),
-    study_hours_per_day: int = Form(4)
-):
-    """Generate Pomodoro-based study timetable using repository algorithm"""
-    try:
-        # Use the repository algorithm without importing pandas
-        from app.services.timetable_repository import generate_timetable_from_repository
+async def generate_timetable(request: Request):
+    """Generate Pomodoro-based study timetable."""
+    # Accepts BOTH JSON body (student.html) and form-urlencoded (timetable.html).
+    # Falls back to a pure-Python generator (no pandas/plotly) so it works on Vercel.
+    def _as_list(v):
+        import json
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return [str(x).strip() for x in v if str(x).strip()]
+        s = str(v).strip()
+        if not s:
+            return []
+        if s.startswith("["):
+            try:
+                arr = json.loads(s)
+                return [str(x).strip() for x in arr if str(x).strip()]
+            except Exception:
+                pass
+        return [x.strip() for x in s.split(",") if x.strip()]
 
-        result = generate_timetable_from_repository(
-            subjects,
-            difficulty_levels,
-            study_hours_per_day
-        )
-        
+    try:
+        ct = request.headers.get("content-type", "").lower()
+        if "application/json" in ct:
+            body = await request.json()
+        else:
+            form = await request.form()
+            body = dict(form)
+
+        subjects = _as_list(body.get("subjects"))
+        if not subjects:
+            raise HTTPException(status_code=400, detail="Subjects are required")
+
+        difficulty = _as_list(body.get("difficulty_levels", body.get("difficulty")))
+        while len(difficulty) < len(subjects):
+            difficulty.append("medium")
+        difficulty = difficulty[:len(subjects)]
+
+        try:
+            study_hours = int(body.get("study_hours_per_day", 4)) or 4
+        except (TypeError, ValueError):
+            study_hours = 4
+        if study_hours < 1:
+            study_hours = 4
+
+        busy_hours = body.get("busy_hours")
+        if isinstance(busy_hours, str):
+            busy_str = busy_hours.strip()
+            if busy_str:
+                try:
+                    import json
+                    busy_hours = json.loads(busy_str)
+                except Exception:
+                    busy_hours = None
+            else:
+                busy_hours = None
+
+        max_blocks = None
+        mb = body.get("max_blocks_per_day")
+        if mb is not None:
+            try:
+                max_blocks = int(mb)
+            except (TypeError, ValueError):
+                max_blocks = None
+
+        result = None
+        try:
+            from app.services.timetable_repository import generate_timetable_from_repository
+            result = generate_timetable_from_repository(subjects, difficulty, study_hours)
+        except Exception:
+            result = None
+
+        if result is None or not result.get("schedule"):
+            from app.services.timetable_pure import generate_timetable_pure
+            result = generate_timetable_pure(
+                subjects=subjects,
+                difficulty_levels=difficulty,
+                study_hours_per_day=study_hours,
+                busy_hours=busy_hours,
+                max_blocks_per_day=max_blocks,
+            )
+
+        result["success"] = True
+        if "schedule" in result and "timetable" not in result:
+            result["timetable"] = result["schedule"]
+        metrics = result.get("metrics", {})
+        if "daily_average" not in metrics:
+            metrics["daily_average"] = metrics.get("daily_average_hours_with_breaks", 0)
+        result["metrics"] = metrics
         return result
+    except HTTPException:
+        raise
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating timetable: {str(e)}")
-
-
 @router.get("/timetable/google-calendar/auth-url")
 async def get_google_calendar_auth_url():
     """Get Google Calendar authentication URL"""
@@ -224,6 +309,8 @@ async def get_google_calendar_auth_url():
             "success": True,
             "auth_url": auth_url
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error getting auth URL: {str(e)}")
 
@@ -255,6 +342,8 @@ async def create_calendar_events(
         }
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON format")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error creating calendar events: {str(e)}")
 
