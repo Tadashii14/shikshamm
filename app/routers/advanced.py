@@ -144,8 +144,28 @@ async def generate_quiz(
             raise HTTPException(status_code=400, detail="Could not extract meaningful text from PDF")
         
         cleaned_text = clean_text(text)
-        questions = generate_moderate_questions(cleaned_text, num_questions)
-        
+        raw_questions = generate_moderate_questions(cleaned_text, num_questions)
+
+        # Normalize schema so every client sees the same keys.
+        # The generators return {'prompt', 'options', 'correct_answer'} —
+        # expose 'question' as well (and validate the answer index).
+        questions = []
+        for q in raw_questions:
+            opts = q.get("options") or []
+            ca = q.get("correct_answer")
+            prompt = (q.get("prompt") or q.get("question") or "").strip()
+            if not prompt or not opts:
+                continue
+            if not isinstance(ca, int) or ca < 0 or ca >= len(opts):
+                continue
+            questions.append({
+                "question": prompt,
+                "prompt": prompt,
+                "type": q.get("type", "mcq"),
+                "options": opts,
+                "correct_answer": ca,
+            })
+
         if not questions:
             raise HTTPException(
                 status_code=422,

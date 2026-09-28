@@ -136,7 +136,7 @@
         container.innerHTML = questions.map((question, index) => `
           <div class="question-card">
             <h4>Question ${index + 1}</h4>
-            <p class="question-text">${question.question}</p>
+            <p class="question-text">${question.question || question.prompt || '(question text unavailable)'}</p>
             <div class="options">
               ${question.options.map((option, optionIndex) => `
                 <label class="option">

@@ -1600,24 +1600,141 @@ def make_true_about_question(target: Dict, sentences: List[str], top_pool: List[
 
 # -------------------- PROPER FLASHCARDS ALGORITHM FROM REPOSITORY --------------------
 
-def generate_flashcards_from_text(text: str, cards_per_paragraph: int = 1, 
-                                 fallback_cards_total: int = 5, 
-                                 explain_min: int = 25, explain_max: int = 55) -> List[Dict]:
-    """Generate flashcards using the exact repository algorithm"""
-    # Clean text
+_FLASHCARD_STOPWORDS = {
+    "about", "above", "after", "again", "against", "along", "among", "because",
+    "before", "being", "below", "between", "both", "cannot", "could", "does",
+    "doing", "during", "each", "every", "first", "found", "from", "further",
+    "given", "have", "having", "here", "into", "their", "there", "these",
+    "they", "this", "those", "through", "under", "until", "using", "where",
+    "which", "while", "with", "within", "without", "would", "other", "should",
+    "shall", "might", "must", "such", "than", "that", "then", "also",
+    "however", "therefore", "thus", "hence", "example", "examples", "called",
+    "known", "used", "different", "various", "important", "when", "what",
+    "will", "your", "them", "were", "been", "more", "most", "some", "only",
+}
+
+
+def _make_qa_card(sentence: str, context: str, explain_min: int, explain_max: int,
+                  paragraph: Optional[int] = None) -> Dict:
+    """Turn a key sentence into a proper question/answer flashcard.
+
+    Prefers a fill-in-the-blank question (key term blanked out) with the
+    term as the answer, plus a short explanation built from the surrounding
+    context. Falls back to a statement card when no good term exists.
+    """
+    import re
+
+    explanation = make_short_explanation_from_context(
+        context, sentence, explain_min, explain_max
+    )
+
+    words = re.findall(r"[A-Za-z][A-Za-z\-']{3,}", sentence)
+    candidates = [w for w in words if w.lower() not in _FLASHCARD_STOPWORDS]
+    if candidates:
+        # Most content-bearing word: longest (proper nouns tend to be longer)
+        term = max(candidates, key=len)
+        blanked = re.sub(
+            r"\b" + re.escape(term) + r"\b", "_____", sentence,
+            count=1, flags=re.IGNORECASE,
+        )
+        if "_____" in blanked:
+            return {
+                "summary": f"Fill in the blank: {blanked}",
+                "explanation": f"Answer: {term}. {explanation}".strip(),
+                "paragraph": paragraph,
+            }
+
+    # Fallback: statement card (sentence on the front, context on the back)
+    return {
+        "summary": sentence,
+        "explanation": explanation,
+        "paragraph": paragraph,
+    }
+
+
+def generate_flashcards_from_text(text: str, cards_per_paragraph: int = 1,
+                                  fallback_cards_total: int = 5,
+                                  explain_min: int = 25, explain_max: int = 55) -> List[Dict]:
+    """Generate proper Q/A flashcards using the repository algorithm.
+
+    1. Scores sentences per paragraph (centroid vectorizer) and keeps the
+       most representative, non-redundant, non-banned ones.
+    2. Turns each selected sentence into a real question/answer card
+       (fill-in-the-blank + short context explanation).
+    3. Tops up with globally-selected sentences when paragraph-level
+       generation falls short of `fallback_cards_total`.
+    """
     cleaned_text = clean_text(text)
+    paragraphs = split_into_paragraphs(cleaned_text)
     sentences = split_into_sentences(cleaned_text)
-    
     if not sentences:
         return []
-    
-    # Use the exact repository algorithm - simple sentence pairs
-    cards = []
-    for i in range(min(fallback_cards_total, len(sentences) - 1)):
-        cards.append({
-            "summary": sentences[i],
-            "explanation": sentences[i + 1] if i + 1 < len(sentences) else sentences[i]
-        })
-    
+
+    # Summary sentences are used to build the doc — don't quiz on them.
+    # Never ban more than a quarter of the document: on small docs, banning a
+    # fixed 12 starved every generator and returned zero flashcards.
+    banned_n = min(12, len(sentences) // 4)
+    banned = summarize_main_points(sentences, banned_n) if banned_n > 0 else []
+
+    # Hard cap so a huge PDF can never explode the response
+    overall_cap = min(60, max(fallback_cards_total, 4))
+
+    cards: List[Dict] = []
+    seen_summaries = set()
+
+    # 1) Per-paragraph cards
+    for i, paragraph in enumerate(paragraphs, start=1):
+        if len(cards) >= overall_cap:
+            break
+        made = generate_paragraph_flashcards(
+            paragraph, banned, max(1, cards_per_paragraph),
+            explain_min, explain_max,
+        )
+        for c in made:
+            if len(cards) >= overall_cap:
+                break
+            if c["summary"] in seen_summaries:
+                continue
+            seen_summaries.add(c["summary"])
+            cards.append(_make_qa_card(
+                c["summary"], paragraph, explain_min, explain_max, paragraph=i
+            ))
+
+    # 2) Global fallback to top up to `fallback_cards_total`
+    if len(cards) < fallback_cards_total:
+        global_cards = generate_global_fallback_flashcards(
+            cleaned_text, banned,
+            fallback_cards_total - len(cards) + 3,
+            explain_min, explain_max,
+        )
+        for c in global_cards:
+            if len(cards) >= fallback_cards_total:
+                break
+            if c["summary"] in seen_summaries:
+                continue
+            seen_summaries.add(c["summary"])
+            cards.append(_make_qa_card(
+                c["summary"], cleaned_text, explain_min, explain_max, paragraph=None
+            ))
+
+    # 3) Safety net: degenerate inputs (e.g. one sentence repeated) can be
+    #    fully banned by the summary filter. Never return zero cards when the
+    #    document has usable sentences — retry without the ban list.
+    if not cards:
+        global_cards = generate_global_fallback_flashcards(
+            cleaned_text, [],
+            max(3, min(overall_cap, fallback_cards_total)),
+            explain_min, explain_max,
+        )
+        for c in global_cards:
+            if len(cards) >= overall_cap:
+                break
+            if c["summary"] in seen_summaries:
+                continue
+            seen_summaries.add(c["summary"])
+            cards.append(_make_qa_card(
+                c["summary"], cleaned_text, explain_min, explain_max, paragraph=None
+            ))
+
     return cards
 

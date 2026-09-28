@@ -28,7 +28,7 @@
       <div class="section-status" style="margin: -5px 0 15px 0;">
         <div class="status-indicator">
           <span class="status-dot inactive"></span>
-          <span>Face Verified: Proxy mode active</span>
+          <span>Face check: starting…</span>
         </div>
         </div>
 
@@ -62,7 +62,7 @@
               <video id="video" autoplay muted playsinline></video>
               <div id="faceRecognitionStatus" class="status-indicator">
                 <span class="status-dot inactive"></span>
-                <span>Face Verified: Proxy mode</span>
+                <span>Face check: waiting for camera</span>
               </div>
             </div>
             <div class="camera-controls">
@@ -233,6 +233,86 @@
         }
       }
 
+      // ---- Browser-side face detection (real face check, no server model) ----
+      // Loads face-api.js (tiny detector) from CDN. If it can't load (offline,
+      // CDN blocked), falls back to proxy mode: the camera flow continues as
+      // before instead of breaking.
+      const FaceCheck = {
+        ready: false, loading: false, failed: false, _pending: null,
+        ensure() {
+          if (this.ready || this.failed) return Promise.resolve(this.ready);
+          if (this._pending) return this._pending;
+          this.loading = true;
+          this._pending = new Promise((resolve) => {
+            const done = (ok) => { this.loading = false; this.ready = ok; this.failed = !ok; resolve(ok); };
+            const s = document.createElement('script');
+            s.src = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.13/dist/face-api.js';
+            s.onload = async () => {
+              try {
+                await faceapi.nets.tinyFaceDetector.loadFromUri('https://cdn.jsdelivr.net/gh/vladmandic/face-api@master/model/');
+                console.log('Face checker loaded (tiny face detector)');
+                done(true);
+              } catch (e) { console.warn('Face model load failed:', e); done(false); }
+            };
+            s.onerror = () => { console.warn('face-api.js CDN unavailable — proxy mode'); done(false); };
+            document.head.appendChild(s);
+          });
+          return this._pending;
+        },
+        async detect(source) {
+          if (!this.ready || !source) return null; // null = check unavailable (proxy mode)
+          try {
+            const det = await faceapi.detectSingleFace(
+              source, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.4 })
+            );
+            return !!det;
+          } catch (e) { return null; }
+        }
+      };
+
+      function setFaceStatus(text, active) {
+        const el = document.getElementById('faceRecognitionStatus');
+        if (el) el.innerHTML = `<span class="status-dot ${active ? 'active' : 'inactive'}"></span><span>${text}</span>`;
+      }
+
+      // Request the camera with a fallback chain + device pre-check so the
+      // user gets a precise, actionable message instead of a generic error.
+      async function getUserMediaSafe() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          const err = new Error('Camera API not available. Use Chrome/Edge/Firefox over HTTPS.');
+          err.name = 'SecurityError';
+          throw err;
+        }
+        // Pre-check: does the page see any camera at all?
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const cams = devices.filter(d => d.kind === 'videoinput');
+          if (cams.length === 0) {
+            const err = new Error('No camera found. If your PC has a webcam: open Windows Settings > Privacy & security > Camera and turn ON both toggles, close other apps using it (Zoom/Teams), then reload this page.');
+            err.name = 'NotFoundError';
+            throw err;
+          }
+        } catch (e) {
+          if (e.name === 'NotFoundError') throw e; // our pre-check error
+          // enumeration can fail before permission is granted — just continue
+        }
+        const attempts = [
+          { video: { width: { ideal: 320 }, height: { ideal: 240 }, facingMode: 'user', frameRate: { ideal: 10, max: 15 } } },
+          { video: true },
+        ];
+        let lastErr = null;
+        for (const constraints of attempts) {
+          try {
+            return await navigator.mediaDevices.getUserMedia(constraints);
+          } catch (e) {
+            lastErr = e;
+            // Permission/security problems won't be fixed by retrying looser constraints
+            if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError' || e.name === 'SecurityError') throw e;
+          }
+        }
+        throw lastErr || new Error('Camera unavailable');
+      }
+
       function cameraErrorMessage(error) {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
           return 'Camera API not available. Use Chrome/Edge/Firefox over HTTPS.';
@@ -243,7 +323,7 @@
             return 'Camera permission BLOCKED. Click the camera icon in the address bar, set Camera to "Allow", then reload and try again.';
           case 'NotFoundError':
           case 'DevicesNotFoundError':
-            return 'No camera found on this device.';
+            return 'No camera found. If your PC has a webcam: open Windows Settings > Privacy & security > Camera and turn ON both toggles ("Camera access" and "Let apps access your camera"), close other apps using it (Zoom/Teams), then reload this page.';
           case 'NotReadableError':
           case 'TrackStartError':
             return 'Camera is busy — close other apps/tabs using it (Zoom, Teams, another browser tab) and try again.';
@@ -258,13 +338,7 @@
 
       async function startCamera() {
         try {
-          adminStream = await navigator.mediaDevices.getUserMedia({ 
-            video: { 
-              width: { ideal: 320 }, 
-              height: { ideal: 240 }, 
-              frameRate: { ideal: 10, max: 15 } // Lower frame rate for better performance
-            }
-          });
+          adminStream = await getUserMediaSafe();
           video = document.getElementById('video');
           video.srcObject = adminStream;
           
@@ -276,6 +350,12 @@
           video.play();
           document.getElementById("startCameraBtn").disabled = true;
           document.getElementById("stopCameraBtn").disabled = false;
+
+          // Warm up the browser-side face checker (graceful if unavailable)
+          setFaceStatus('Face check: loading...', false);
+          FaceCheck.ensure().then(ok => {
+            setFaceStatus(ok ? 'Face check: active - waiting for a face' : 'Face check: unavailable (proxy mode)', ok);
+          });
           
           // Start auto-identify loop with slower interval for better performance
           adminLoop = setInterval(sendFrame, 1000); // 1 FPS instead of 0.5 FPS
@@ -303,60 +383,72 @@
         showNotification('Camera stopped', 'info');
       }
 
-      let frameCount = 0;
+            let frameCount = 0;
       const FRAME_SKIP = 5; // Process every 5th frame for better performance
-      
+
       async function sendFrame() {
         if (!currentSession) return;
-        
+
         frameCount++;
         if (frameCount % FRAME_SKIP !== 0) {
           setTimeout(sendFrame, 200); // 5 FPS instead of 30 FPS
           return;
         }
-        
+
         try {
           const video = document.getElementById('video');
+          if (!video || !video.videoWidth) {
+            setTimeout(sendFrame, 200);
+            return;
+          }
+
+          // Real face check in the browser BEFORE sending anything.
+          // - true  : face present -> send frame for marking
+          // - false : no face      -> show status, skip the request
+          // - null  : checker unavailable (proxy mode) -> proceed as before
+          const hasFace = await FaceCheck.detect(video);
+          if (hasFace === false) {
+            setFaceStatus('No face in frame - look at the camera', false);
+            setTimeout(sendFrame, 500);
+            return;
+          }
+
           const canvas = document.createElement('canvas');
           // Use smaller canvas for faster processing
           canvas.width = 320;
           canvas.height = 240;
           const ctx = canvas.getContext('2d');
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          
+
           const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.7));
           const fd = new FormData();
           fd.append('code', currentSession.code);
           fd.append('file', new File([blob], 'frame.jpg', { type: 'image/jpeg' }));
-          
+
           const headers = {};
           const adminKey = localStorage.getItem('ADMIN_KEY') || 'super-secret-key';
           headers['X-Admin-Key'] = adminKey;
-          
+
+          setFaceStatus(hasFace ? 'Face detected - checking attendance...' : 'Checking...', true);
           const response = await fetch('/face/auto-identify-and-mark', { method: 'POST', body: fd, headers });
           const data = await response.json();
-          
+
           if (response.ok) {
             if (data.user_id) {
-              addToAttendanceList(`User ${data.user_id}`, new Date());
-              // Update status to show proxy verification text
-              document.getElementById('faceRecognitionStatus').innerHTML = 
-                '<span class="status-dot active"></span><span>Face Verified: Marking</span>';
+              addToAttendanceList(`Student #${data.user_id}`, new Date());
+              setFaceStatus('Face verified - attendance marked', true);
             } else {
-              console.log('Proxy verification message:', data.message);
-              // Update status to show proxy text
-              document.getElementById('faceRecognitionStatus').innerHTML = 
-                '<span class="status-dot inactive"></span><span>Face Verified: Waiting</span>';
+              console.log('Verification message:', data.message);
+              setFaceStatus('Face seen - waiting for a match', true);
             }
           } else {
             console.log('Verification error:', data.detail || 'Unknown error');
-            document.getElementById('faceRecognitionStatus').innerHTML = 
-              '<span class="status-dot inactive"></span><span>Face Verified: Error</span>';
+            setFaceStatus('Checking... (no match yet)', false);
           }
         } catch (error) {
           console.error('Frame processing error:', error);
         }
-        
+
         // Use setTimeout instead of requestAnimationFrame for better control
         setTimeout(sendFrame, 200); // 5 FPS instead of 30 FPS
       }
@@ -432,7 +524,7 @@
       async function startEnrollCamera() {
         try {
           const video = document.getElementById('enrollVideo');
-          const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          const stream = await getUserMediaSafe();
           video.srcObject = stream;
           
           await new Promise(resolve => {
@@ -460,6 +552,13 @@
         
         try {
           const video = document.getElementById('enrollVideo');
+
+          // Require a real face in frame before enrolling (when checker available)
+          const hasFace = await FaceCheck.detect(video);
+          if (hasFace === false) {
+            showNotification('No face detected - center your face in the frame and try again.', 'error');
+            return;
+          }
           const canvas = document.getElementById('enrollCanvas');
           const ctx = canvas.getContext('2d');
           canvas.width = video.videoWidth;
@@ -545,6 +644,9 @@
         // Set admin key for API calls
         localStorage.setItem('ADMIN_KEY', 'super-secret-key');
       });
+
+      // Preload the browser-side face checker
+        FaceCheck.ensure();
 
       // Cleanup on page unload
       window.addEventListener('beforeunload', () => {

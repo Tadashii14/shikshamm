@@ -23,7 +23,7 @@
           <div class="section-status">
             <div id="faceStatus" class="status-indicator">
               <span class="status-dot inactive"></span>
-              <span>Face Verified: Not Active</span>
+              <span>Camera: not started</span>
         </div>
           </div>
         </div>
@@ -264,45 +264,126 @@
     </div>
 
     <script>
-      // Camera and Face Verification
+      // ---- Browser-side face detection (real face check, no server model) ----
+      // Loads face-api.js (tiny detector) from CDN. If it can't load (offline,
+      // CDN blocked), falls back to proxy mode: the camera flow continues as
+      // before instead of breaking.
+      const FaceCheck = {
+        ready: false, loading: false, failed: false, _pending: null,
+        ensure() {
+          if (this.ready || this.failed) return Promise.resolve(this.ready);
+          if (this._pending) return this._pending;
+          this.loading = true;
+          this._pending = new Promise((resolve) => {
+            const done = (ok) => { this.loading = false; this.ready = ok; this.failed = !ok; resolve(ok); };
+            const s = document.createElement('script');
+            s.src = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.13/dist/face-api.js';
+            s.onload = async () => {
+              try {
+                await faceapi.nets.tinyFaceDetector.loadFromUri('https://cdn.jsdelivr.net/gh/vladmandic/face-api@master/model/');
+                console.log('Face checker loaded (tiny face detector)');
+                done(true);
+              } catch (e) { console.warn('Face model load failed:', e); done(false); }
+            };
+            s.onerror = () => { console.warn('face-api.js CDN unavailable - proxy mode'); done(false); };
+            document.head.appendChild(s);
+          });
+          return this._pending;
+        },
+        async detect(source) {
+          if (!this.ready || !source) return null; // null = check unavailable (proxy mode)
+          try {
+            const det = await faceapi.detectSingleFace(
+              source, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.4 })
+            );
+            return !!det;
+          } catch (e) { return null; }
+        }
+      };
+
+      // Request the camera with a fallback chain + device pre-check so the
+      // user gets a precise, actionable message instead of a generic error.
+      async function getUserMediaSafe() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          const err = new Error('Camera API not available. Use Chrome/Edge/Firefox over HTTPS.');
+          err.name = 'SecurityError';
+          throw err;
+        }
+        // Pre-check: does the page see any camera at all?
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const cams = devices.filter(d => d.kind === 'videoinput');
+          if (cams.length === 0) {
+            const err = new Error('No camera found. If your PC has a webcam: open Windows Settings > Privacy & security > Camera and turn ON both toggles, close other apps using it (Zoom/Teams), then reload this page.');
+            err.name = 'NotFoundError';
+            throw err;
+          }
+        } catch (e) {
+          if (e.name === 'NotFoundError') throw e; // our pre-check error
+          // enumeration can fail before permission is granted - just continue
+        }
+        const attempts = [
+          { video: { width: { ideal: 320 }, height: { ideal: 240 }, facingMode: 'user', frameRate: { ideal: 10, max: 15 } } },
+          { video: true },
+        ];
+        let lastErr = null;
+        for (const constraints of attempts) {
+          try {
+            return await navigator.mediaDevices.getUserMedia(constraints);
+          } catch (e) {
+            lastErr = e;
+            if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError' || e.name === 'SecurityError') throw e;
+          }
+        }
+        throw lastErr || new Error('Camera unavailable');
+      }
+
+            // Camera and Face Verification
       async function startCamera() {
         try {
           const video = document.getElementById('camera');
           const overlay = document.querySelector('.camera-overlay');
-          const stream = await navigator.mediaDevices.getUserMedia({
-            video: { 
-              width: { ideal: 320 }, 
-              height: { ideal: 240 }, 
-              facingMode: 'user',
-              frameRate: { ideal: 10, max: 15 }
-            }
-          });
+          const stream = await getUserMediaSafe();
           video.srcObject = stream;
           overlay.classList.add('hidden');
           document.getElementById("verifyBtn").disabled = false;
-          document.getElementById("faceStatus").innerHTML = '<span class="status-dot active"></span><span>Face Verified: Active</span>';
-          showNotification("Camera started automatically", "success");
+          document.getElementById("faceStatus").innerHTML = '<span class="status-dot active"></span><span>Camera on - face check loading...</span>';
+          showNotification("Camera started", "success");
+
+          // Warm up the browser-side face checker (graceful if unavailable)
+          FaceCheck.ensure().then(ok => {
+            document.getElementById("faceStatus").innerHTML =
+              `<span class="status-dot ${ok ? 'active' : 'inactive'}"></span><span>` +
+              (ok ? 'Face check: active - center your face' : 'Face check: unavailable (proxy mode)') +
+              '</span>';
+          });
         } catch (error) {
           console.error("Error starting camera:", error);
-          document.getElementById("faceStatus").innerHTML = '<span class="status-dot inactive"></span><span>Face Recognition: Camera unavailable</span>';
-          showNotification((() => {
-            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-              return 'Camera API not available. Use Chrome/Edge/Firefox over HTTPS.';
-            }
-            switch (error && error.name) {
-              case 'NotAllowedError':
-              case 'PermissionDeniedError':
-                return 'Camera permission BLOCKED. Click the camera icon in the address bar, set Camera to "Allow", then reload.';
-              case 'NotFoundError':
-              case 'DevicesNotFoundError':
-                return 'No camera found on this device.';
-              case 'NotReadableError':
-              case 'TrackStartError':
-                return 'Camera is busy — close other apps/tabs using it and try again.';
-              default:
-                return 'Camera error: ' + ((error && (error.name + ': ' + error.message)) || 'unknown');
-            }
-          })(), "error");
+          document.getElementById("faceStatus").innerHTML = '<span class="status-dot inactive"></span><span>Camera unavailable</span>';
+          showNotification(cameraErrorMessage(error), "error");
+        }
+      }
+
+      function cameraErrorMessage(error) {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          return 'Camera API not available. Use Chrome/Edge/Firefox over HTTPS.';
+        }
+        switch (error && error.name) {
+          case 'NotAllowedError':
+          case 'PermissionDeniedError':
+            return 'Camera permission BLOCKED. Click the camera icon in the address bar, set Camera to "Allow", then reload and try again.';
+          case 'NotFoundError':
+          case 'DevicesNotFoundError':
+            return 'No camera found. If your PC has a webcam: open Windows Settings > Privacy & security > Camera and turn ON both toggles ("Camera access" and "Let apps access your camera"), close other apps using it (Zoom/Teams), then reload this page.';
+          case 'NotReadableError':
+          case 'TrackStartError':
+            return 'Camera is busy - close other apps/tabs using it (Zoom, Teams, another browser tab) and try again.';
+          case 'OverconstrainedError':
+            return 'Camera does not support the requested settings. Try again.';
+          case 'SecurityError':
+            return 'Camera blocked: page must be served over HTTPS.';
+          default:
+            return 'Camera error: ' + ((error && (error.name + ': ' + error.message)) || 'unknown');
         }
       }
 
@@ -350,6 +431,18 @@
           canvas.height = video.videoHeight;
         const ctx = canvas.getContext('2d');
           ctx.drawImage(video, 0, 0);
+
+          // Require a real face in frame before verifying (when checker available).
+          // false = no face found; null = checker unavailable (proxy mode) -> proceed.
+          const hasFace = await FaceCheck.detect(video);
+          if (hasFace === false) {
+            document.getElementById('faceMsg').textContent = 'No face detected. Please look at the camera and try again.';
+            document.getElementById('faceMsg').className = 'status-message';
+            document.getElementById('faceMsg').style.display = 'block';
+            showNotification('No face detected - look at the camera and try again', 'info');
+            return;
+          }
+
 
           const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
           const formData = new FormData();
@@ -438,7 +531,7 @@
             console.log('WebSocket connected');
             reconnectAttempts = 0;
             document.getElementById('faceStatus').innerHTML = 
-              '<span class="status-dot active"></span> Face Verified: Connected';
+              '<span class="status-dot active"></span> Connected';
           };
           
           ws.onmessage = function(event) {
@@ -453,7 +546,7 @@
           ws.onclose = function() {
             console.log('WebSocket disconnected');
             document.getElementById('faceStatus').innerHTML = 
-              '<span class="status-dot inactive"></span> Face Verified: Disconnected';
+              '<span class="status-dot inactive"></span> Disconnected';
             
             // Reconnect with exponential backoff
             if (reconnectAttempts < maxReconnectAttempts) {
@@ -468,7 +561,7 @@
           ws.onerror = function(error) {
             console.error('WebSocket error:', error);
             document.getElementById('faceStatus').innerHTML = 
-              '<span class="status-dot inactive"></span> Face Verified: Error';
+              '<span class="status-dot inactive"></span> Error';
           };
         } catch (error) {
           console.error('WebSocket connection failed:', error);
