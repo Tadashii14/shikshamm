@@ -146,6 +146,12 @@ async def generate_quiz(
         cleaned_text = clean_text(text)
         questions = generate_moderate_questions(cleaned_text, num_questions)
         
+        if not questions:
+            raise HTTPException(
+                status_code=422,
+                detail="Could not generate questions from this PDF. It may be a scanned/image PDF (no selectable text) or contain too little usable content. Try a text-based PDF."
+            )
+        
         return {
             "success": True,
             "questions": questions,

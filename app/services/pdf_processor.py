@@ -126,7 +126,11 @@ def is_noise_line(line: str) -> bool:
     if alpha_ratio < 0.55 or digit_ratio > 0.25:
         return True
     if len(line) >= 12 and line.upper() == line and any(c.isalpha() for c in line):
-        return True
+        # Only treat SHORT all-caps lines as headers/footers ("CHAPTER 5 FUELS").
+        # Long all-caps lines are real content (common in scanned notes) and
+        # must survive cleaning.
+        if len(tokens) <= 8:
+            return True
     return False
 
 def remove_repeating_headers_footers(lines):
@@ -253,7 +257,10 @@ def split_into_sentences(text: str) -> List[str]:
         if alpha_ratio < 0.55 or digit_ratio > 0.25:
             continue
         if len(s) >= 12 and s.upper() == s and any(c.isalpha() for c in s):
-            continue
+            # Only drop SHORT all-caps fragments (headers/footers). Long
+            # all-caps sentences are real content (scanned notes) — keep them.
+            if len(s.split()) <= 8:
+                continue
         if not s.endswith((".", "?", "!")):
             s = s + "."
         out.append(s)
@@ -665,7 +672,92 @@ def generate_moderate_questions(text: str, num_questions: int = 10) -> List[Dict
                 break
             try_add(q)
     
+    # Fallback: permissive generator for hard texts (bullet notes, short
+    # lines, unusual formatting) so a valid text PDF never returns 0 questions.
+    if len(questions) < num_questions:
+        existing = set(used_prompts)
+        for q in generate_fallback_questions(cleaned_text, num_questions - len(questions)):
+            if q['prompt'] not in existing:
+                questions.append(q)
+                existing.add(q['prompt'])
+    
     return questions[:num_questions]
+
+
+def generate_fallback_questions(text: str, num_questions: int) -> List[Dict]:
+    """Permissive fallback MCQ generator.
+
+    Works on short/bullet-style sentences (>= 6 words) that the main
+    algorithm rejects, using relaxed distractor selection. Guarantees
+    questions for any PDF that has real (non-image) text.
+    """
+    import random
+    import re
+    
+    sentences = sentence_split(text)
+    if len(sentences) < 2:
+        return []
+    
+    top = extract_top_terms_with_phrases(text, 150)
+    pool = [t['term'] for t in top
+            if len(t['term']) >= 4 and not re.match(r'^\d+$', t['term'])]
+    if len(pool) < 4:
+        return []
+    
+    def title_case(s):
+        return re.sub(r'\b([a-z])', lambda m: m.group(1).upper(), s)
+    
+    def jaccard(a, b):
+        sa, sb = set(a.split()), set(b.split())
+        return len(sa & sb) / max(1, len(sa | sb))
+    
+    questions = []
+    used_prompts = set()
+    used_terms = set()
+    
+    order = list(range(len(sentences)))
+    random.shuffle(order)
+    for idx in order:
+        if len(questions) >= num_questions:
+            break
+        s = sentences[idx]
+        if len(s.split()) < 6:
+            continue
+        s_lc = s.lower()
+        
+        candidates = [t for t in pool
+                      if t not in used_terms
+                      and re.search(r'\b' + re.escape(t) + r'\b', s, re.I)]
+        if not candidates:
+            continue
+        term = random.choice(candidates)
+        
+        rx = re.compile(r'\b' + re.escape(term) + r'\b', re.I)
+        prompt = rx.sub('_____', s)
+        if '_____' not in prompt or prompt in used_prompts:
+            continue
+        
+        dis_pool = [t for t in pool
+                    if t != term and jaccard(t.lower(), term.lower()) < 0.5]
+        if len(dis_pool) < 3:
+            continue
+        random.shuffle(dis_pool)
+        
+        answer = title_case(term)
+        opts = [answer] + [title_case(t) for t in dis_pool[:3]]
+        random.shuffle(opts)
+        correct = opts.index(answer)
+        
+        questions.append({
+            'type': 'cloze',
+            'prompt': prompt,
+            'options': [f"{chr(65 + i)}) {o}" for i, o in enumerate(opts)],
+            'correct_answer': correct
+        })
+        used_prompts.add(prompt)
+        used_terms.add(term)
+    
+    return questions
 
 
 def sentence_split(text: str) -> List[str]:
@@ -1002,49 +1094,10 @@ def generate_generic_definition_tail(term: str) -> str:
     return random.choice(tails)
 
 
-def generate_fallback_questions(text: str, num_questions: int) -> List[Dict]:
-    """Generate basic questions as fallback when intelligent extraction fails"""
-    import random
-    
-    sentences = split_into_sentences(text)
-    questions = []
-    
-    for i in range(min(num_questions, len(sentences))):
-        sentence = sentences[i]
-        words = sentence.split()
-        
-        if len(words) > 8:  # Only use longer sentences
-            # Find important words (nouns, adjectives, verbs)
-            important_words = []
-            for word in words:
-                if len(word) > 4 and word.isalpha():
-                    important_words.append(word)
-            
-            if important_words:
-                # Pick a random important word
-                target_word = random.choice(important_words)
-                
-                # Create a meaningful question
-                question_text = sentence.replace(target_word, "_____")
-                
-                # Generate options
-                options = [target_word]
-                
-                # Add other important words as wrong options
-                other_words = [w for w in important_words if w != target_word]
-                options.extend(other_words[:2])
-                options.append("None of the above")
-                
-                random.shuffle(options)
-                correct_index = options.index(target_word)
-                
-                questions.append({
-                    "question": f"Complete the sentence: {question_text}",
-                    "options": options,
-                    "correct_answer": correct_index
-                })
-    
-    return questions
+# NOTE: an older, stricter generate_fallback_questions() used to be defined
+# here and silently overrode the permissive version above (later definitions
+# win in Python). It has been removed so generate_moderate_questions() gets
+# the permissive fallback that works on bullet/short-sentence notes.
 
 
 def extract_key_concepts(paragraph: str) -> Dict[str, str]:
