@@ -233,6 +233,29 @@
         }
       }
 
+      function cameraErrorMessage(error) {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          return 'Camera API not available. Use Chrome/Edge/Firefox over HTTPS.';
+        }
+        switch (error && error.name) {
+          case 'NotAllowedError':
+          case 'PermissionDeniedError':
+            return 'Camera permission BLOCKED. Click the camera icon in the address bar, set Camera to "Allow", then reload and try again.';
+          case 'NotFoundError':
+          case 'DevicesNotFoundError':
+            return 'No camera found on this device.';
+          case 'NotReadableError':
+          case 'TrackStartError':
+            return 'Camera is busy — close other apps/tabs using it (Zoom, Teams, another browser tab) and try again.';
+          case 'OverconstrainedError':
+            return 'Camera does not support the requested settings. Try again.';
+          case 'SecurityError':
+            return 'Camera blocked: page must be served over HTTPS.';
+          default:
+            return 'Camera error: ' + ((error && (error.name + ': ' + error.message)) || 'unknown');
+        }
+      }
+
       async function startCamera() {
         try {
           adminStream = await navigator.mediaDevices.getUserMedia({ 
@@ -259,7 +282,8 @@
           showNotification('Camera started successfully', 'success');
           
         } catch (error) {
-          showNotification('Camera access denied or not available', 'error');
+          console.error('Camera error:', error);
+          showNotification(cameraErrorMessage(error), 'error');
         }
       }
 
@@ -421,7 +445,8 @@
           document.getElementById("enrollFaceBtn").disabled = false;
           showNotification('Enrollment camera started', 'success');
         } catch (error) {
-          showNotification('Camera access denied', 'error');
+          console.error('Enrollment camera error:', error);
+          showNotification(cameraErrorMessage(error), 'error');
         }
       }
 

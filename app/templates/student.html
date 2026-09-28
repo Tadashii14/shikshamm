@@ -284,8 +284,25 @@
           showNotification("Camera started automatically", "success");
         } catch (error) {
           console.error("Error starting camera:", error);
-          document.getElementById("faceStatus").innerHTML = '<span class="status-dot inactive"></span><span>Face Recognition: Camera access denied</span>';
-          showNotification("Error starting camera. Please allow camera access.", "error");
+          document.getElementById("faceStatus").innerHTML = '<span class="status-dot inactive"></span><span>Face Recognition: Camera unavailable</span>';
+          showNotification((() => {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+              return 'Camera API not available. Use Chrome/Edge/Firefox over HTTPS.';
+            }
+            switch (error && error.name) {
+              case 'NotAllowedError':
+              case 'PermissionDeniedError':
+                return 'Camera permission BLOCKED. Click the camera icon in the address bar, set Camera to "Allow", then reload.';
+              case 'NotFoundError':
+              case 'DevicesNotFoundError':
+                return 'No camera found on this device.';
+              case 'NotReadableError':
+              case 'TrackStartError':
+                return 'Camera is busy — close other apps/tabs using it and try again.';
+              default:
+                return 'Camera error: ' + ((error && (error.name + ': ' + error.message)) || 'unknown');
+            }
+          })(), "error");
         }
       }
 
