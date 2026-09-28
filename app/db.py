@@ -16,20 +16,50 @@ if DATABASE_URL.startswith("postgres://"):
 if DATABASE_URL.startswith("postgresql://") and "+" not in DATABASE_URL:
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
 
-# Serverless (Vercel) has a read-only filesystem except /tmp. If we are using
-# SQLite and the working directory isn't writable, fall back to /tmp.
-_DB_FILE = "attendai.db"
-if DATABASE_URL.startswith("sqlite"):
+
+def _writable_sqlite_url() -> str:
+    """Return a SQLite URL in a writable location (CWD or /tmp on serverless)."""
+    global _DB_FILE
     try:
         probe = sqlite3.connect(_DB_FILE)
         probe.execute("SELECT 1")
         probe.close()
+        return "sqlite:///" + _DB_FILE.replace(os.sep, "/")
     except sqlite3.OperationalError:
-        _DB_FILE = os.path.join(tempfile.gettempdir(), "attendai.db")
-        DATABASE_URL = "sqlite:///" + _DB_FILE.replace(os.sep, "/")
+        pass
+    _DB_FILE = os.path.join(tempfile.gettempdir(), "attendai.db")
+    return "sqlite:///" + _DB_FILE.replace(os.sep, "/")
+
+
+def _can_connect(url: str) -> bool:
+    """Quick connectivity probe so a dead/unreachable remote DB (e.g. expired
+    Render Postgres) no longer takes the whole app down — we fall back to SQLite."""
+    if not url.startswith(("postgresql", "mysql", "mssql")):
+        return True
+    try:
+        connect_args = {"connect_timeout": 5} if url.startswith("postgresql") else {}
+        test_engine = create_engine(url, connect_args=connect_args)
+        with test_engine.connect() as conn:
+            conn.exec_driver_sql("SELECT 1")
+        test_engine.dispose()
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"WARNING: DATABASE_URL unreachable ({exc.__class__.__name__}: {exc})")
+        return False
+
+
+_DB_FILE = "attendai.db"
+if DATABASE_URL.startswith("sqlite"):
+    DATABASE_URL = _writable_sqlite_url()
+elif not _can_connect(DATABASE_URL):
+    # Remote DB is unreachable — degrade gracefully to SQLite so sessions,
+    # attendance, notes and AI tools keep working instead of erroring on
+    # every request.
+    print("WARNING: falling back to SQLite (remote database unavailable)")
+    DATABASE_URL = _writable_sqlite_url()
 
 # If using Render Postgres, ensure async drivers are not required by SQLModel
-engine = create_engine(DATABASE_URL, echo=False)
+engine = create_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
 
 
 def init_db() -> None:

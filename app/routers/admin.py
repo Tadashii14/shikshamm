@@ -179,7 +179,7 @@ def get_attendance_stats(user_id: int, session: Session = Depends(get_session)):
     
     last_attendance_date = "Never"
     if last_attendance:
-        last_attendance_date = last_attendance.created_at.strftime("%Y-%m-%d") if last_attendance.created_at else "Unknown"
+        last_attendance_date = last_attendance.timestamp.strftime("%Y-%m-%d") if last_attendance.timestamp else "Unknown"
     
     return {
         "total_sessions": total_sessions,

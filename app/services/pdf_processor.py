@@ -175,14 +175,29 @@ def clean_text(raw_text: str) -> str:
     cleaned = remove_repeating_headers_footers(cleaned)
     cleaned = [ln for ln in cleaned if not is_noise_line(ln)]
 
+    def _is_continuation(prev: str, nxt: str) -> bool:
+        """Heuristic: should line `nxt` be joined to line `prev`?
+
+        Join only for hyphenated line-wraps or when the previous line has no
+        terminal punctuation and the next starts lowercase (wrapped prose).
+        Standalone lines/bullets (starting uppercase, no punctuation) are kept
+        as separate sentences/paragraphs so bullet-style notes work well.
+        """
+        if prev.endswith("-"):
+            return True
+        return bool(prev) and prev[-1] not in ".?!" and nxt[:1].islower()
+
     paragraphs = []
-    current = []
+    current: List[str] = []
     for ln in cleaned:
         if not ln:
             if current:
                 paragraphs.append(" ".join(current))
                 current = []
             continue
+        if current and not _is_continuation(current[-1], ln):
+            paragraphs.append(" ".join(current))
+            current = []
         current.append(ln)
     if current:
         paragraphs.append(" ".join(current))
@@ -197,10 +212,23 @@ def clean_text(raw_text: str) -> str:
 SENT_SPLIT = re.compile(r"(?<=[.?!])\s+(?=[A-Z(])")
 
 def split_into_paragraphs(text: str) -> List[str]:
-    return [p.strip() for p in text.split("\n\n") if len(p.strip().split()) >= 20]
+    paras = [p.strip() for p in text.split("\n\n") if p.strip()]
+    # Prefer substantial paragraphs, but degrade gracefully for line-based
+    # notes (bullets/slides) where paragraphs are short.
+    for min_words in (20, 8, 1):
+        kept = [p for p in paras if len(p.split()) >= min_words]
+        if kept:
+            return kept
+    return paras
 
 def split_into_sentences(text: str) -> List[str]:
-    sents = [s.strip() for s in SENT_SPLIT.split(text) if s.strip()]
+    # Split on newlines first so line-based notes (each bullet/line = one
+    # sentence even without terminal punctuation) don't get merged, then
+    # apply the sentence-boundary regex within each line/paragraph.
+    parts: List[str] = []
+    for chunk in re.split(r"\n+", text):
+        parts.extend(s.strip() for s in SENT_SPLIT.split(chunk))
+    sents = [s for s in parts if s]
     out = []
     for s in sents:
         if REF_MARKER_RE.search(s):
@@ -327,19 +355,73 @@ def cos_sim(A, B):
         return (A @ B.T) / denom
 
 
+# -------------------- PURE-PYTHON VECTOR HELPERS (numpy-free fallbacks) --------------------
+# These helpers make every downstream feature (summary, flashcards, QA, quiz)
+# work even when numpy and scikit-learn are not installed (e.g. Vercel/free tier).
+
+def _vector_centroid(mat):
+    """Column-mean (centroid) of a document matrix.
+
+    Supports: sklearn csr_matrix, numpy 2D array, and pure-Python list-of-rows.
+    """
+    if HAS_SKLEARN and "csr_matrix" in str(type(mat)):
+        return mat.mean(axis=0)
+    if np is not None and not isinstance(mat, list):
+        return mat.mean(axis=0, keepdims=True)
+    cols = len(mat[0]) if mat and isinstance(mat[0], list) else 0
+    n = max(1, len(mat))
+    return [sum(row[j] for row in mat) / n for j in range(cols)]
+
+
+def _centroid_scores(mat, centroid):
+    """Similarity of each row to the centroid vector (higher = more central)."""
+    if HAS_SKLEARN and "csr_matrix" in str(type(mat)):
+        return (mat @ centroid.T).A.ravel()
+    if np is not None and not isinstance(mat, list):
+        return (mat @ centroid.T).ravel()
+    cols = len(centroid)
+    return [sum(row[j] * centroid[j] for j in range(cols)) for row in mat]
+
+
+def _argsort_desc(scores):
+    """Indices of scores sorted descending (works with numpy arrays and lists)."""
+    if np is not None and not isinstance(scores, list):
+        return np.argsort(-scores).tolist()
+    return sorted(range(len(scores)), key=lambda i: -scores[i])
+
+
+def _ravel(x):
+    """Flatten a matrix (numpy array, csr, or nested lists) to a 1-D sequence."""
+    if isinstance(x, list):
+        out = []
+        for row in x:
+            if isinstance(row, list):
+                out.extend(row)
+            else:
+                out.append(row)
+        return out
+    if HAS_SKLEARN and "csr_matrix" in str(type(x)):
+        return x.toarray().ravel()
+    return np.asarray(x).ravel()
+
+
+def _sim_scalar(a, b) -> float:
+    """Scalar cosine similarity between two vectors/matrix-rows."""
+    s = cos_sim(a, b)
+    if isinstance(s, list):
+        return float(s[0][0])
+    return float(s[0, 0])
+
+
 # -------------------- SUMMARY (GLOBAL MAIN POINTS) --------------------
 
 def summarize_main_points(all_sentences: List[str], sentence_count: int = 10) -> List[str]:
     if not all_sentences:
         return []
     vec, mat = build_vectorizer(all_sentences)
-    if HAS_SKLEARN and "csr_matrix" in str(type(mat)):
-        centroid = mat.mean(axis=0)
-        scores = (mat @ centroid.T).A.ravel()
-    else:
-        centroid = mat.mean(axis=0, keepdims=True)
-        scores = (mat @ centroid.T).ravel()
-    idxs_sorted = np.argsort(-scores).tolist()
+    centroid = _vector_centroid(mat)
+    scores = _centroid_scores(mat, centroid)
+    idxs_sorted = _argsort_desc(scores)
     selected = []
     selected_vecs = []
     for idx in idxs_sorted:
@@ -348,7 +430,7 @@ def summarize_main_points(all_sentences: List[str], sentence_count: int = 10) ->
         cand_vec = vectorize(vec, [all_sentences[idx]])
         redundant = False
         for sv in selected_vecs:
-            if cos_sim(cand_vec, sv)[0,0] > 0.75:
+            if _sim_scalar(cand_vec, sv) > 0.75:
                 redundant = True
                 break
         if not redundant:
@@ -365,10 +447,15 @@ def sentence_is_similar_to_any(target: str, others: List[str], threshold: float 
     vec, mat = build_vectorizer(others + [target])
     q = vectorize(vec, [target])
     pool = vectorize(vec, others)
-    if pool.shape[0] == 0:
+    if hasattr(pool, "shape"):
+        if pool.shape[0] == 0:
+            return False
+    elif not pool:
         return False
-    sims = cos_sim(pool, q).ravel()
-    return float(np.max(sims)) >= threshold
+    sims = _ravel(cos_sim(pool, q))
+    if np is not None and not isinstance(sims, list):
+        return float(np.max(sims)) >= threshold
+    return max(sims, default=0.0) >= threshold
 
 def make_short_explanation_from_context(paragraph: str, anchor_sentence: str,
                                         min_words: int = 25, max_words: int = 55) -> str:
@@ -396,13 +483,9 @@ def generate_paragraph_flashcards(paragraph: str, banned_sentences: List[str],
     if not sentences:
         return []
     vec, mat = build_vectorizer(sentences)
-    if HAS_SKLEARN and "csr_matrix" in str(type(mat)):
-        centroid = mat.mean(axis=0)
-        scores = (mat @ centroid.T).A.ravel()
-    else:
-        centroid = mat.mean(axis=0, keepdims=True)
-        scores = (mat @ centroid.T).ravel()
-    order = np.argsort(-scores).tolist()
+    centroid = _vector_centroid(mat)
+    scores = _centroid_scores(mat, centroid)
+    order = _argsort_desc(scores)
 
     selected = []
     selected_vecs = []
@@ -415,7 +498,7 @@ def generate_paragraph_flashcards(paragraph: str, banned_sentences: List[str],
         cand_vec = vectorize(vec, [s])
         redundant = False
         for sv in selected_vecs:
-            if cos_sim(cand_vec, sv)[0, 0] > 0.7:
+            if _sim_scalar(cand_vec, sv) > 0.7:
                 redundant = True
                 break
         if redundant:
@@ -437,13 +520,9 @@ def generate_global_fallback_flashcards(all_text: str, banned_sentences: List[st
     if not sentences:
         return []
     vec, mat = build_vectorizer(sentences)
-    if HAS_SKLEARN and "csr_matrix" in str(type(mat)):
-        centroid = mat.mean(axis=0)
-        scores = (mat @ centroid.T).A.ravel()
-    else:
-        centroid = mat.mean(axis=0, keepdims=True)
-        scores = (mat @ centroid.T).ravel()
-    order = np.argsort(-scores).tolist()
+    centroid = _vector_centroid(mat)
+    scores = _centroid_scores(mat, centroid)
+    order = _argsort_desc(scores)
 
     selected = []
     selected_vecs = []
@@ -456,7 +535,7 @@ def generate_global_fallback_flashcards(all_text: str, banned_sentences: List[st
         cand_vec = vectorize(vec, [s])
         redundant = False
         for sv in selected_vecs:
-            if cos_sim(cand_vec, sv)[0, 0] > 0.7:
+            if _sim_scalar(cand_vec, sv) > 0.7:
                 redundant = True
                 break
         if redundant:
@@ -490,9 +569,9 @@ def answer_question(query: str, paragraphs: List[str], vec, mat, top_k: int = 3)
     if not query.strip() or not paragraphs:
         return {"answer": "No content available.", "sources": []}
     qv = vectorize(vec, [query])
-    sims = cos_sim(mat, qv).ravel()
-    top_idx = np.argsort(-sims)[:top_k].tolist()
-    chosen = [paragraphs[i] for i in top_idx if sims[i] > 0.05]
+    sims = _ravel(cos_sim(mat, qv))
+    top_idx = _argsort_desc(sims)[:top_k]
+    chosen = [paragraphs[i] for i in top_idx if i < len(paragraphs) and sims[i] > 0.05]
 
     sent_pool = []
     for p in chosen:
@@ -502,8 +581,8 @@ def answer_question(query: str, paragraphs: List[str], vec, mat, top_k: int = 3)
 
     svec, smat = build_vectorizer(sent_pool)
     qsv = vectorize(svec, [query])
-    ssims = cos_sim(smat, qsv).ravel()
-    best_sent_idx = np.argsort(-ssims)[:5]
+    ssims = _ravel(cos_sim(smat, qsv))
+    best_sent_idx = _argsort_desc(ssims)[:5]
     best_sents = [sent_pool[i] for i in best_sent_idx if ssims[i] > 0.05]
 
     answer = " ".join(best_sents) if best_sents else "I could not find a clear answer in the PDF."
@@ -590,9 +669,14 @@ def generate_moderate_questions(text: str, num_questions: int = 10) -> List[Dict
 
 
 def sentence_split(text: str) -> List[str]:
-    """Split text into sentences (exact repository algorithm)"""
+    """Split text into sentences (exact repository algorithm).
+
+    Also splits on newlines so line-based notes (bullets/slides) don't merge
+    into one giant 'sentence' when terminal punctuation is missing.
+    """
     import re
-    return re.sub(r'([.?!])\s+(?=[A-Z(])', r'\1|', text).split('|')
+    parts = re.split(r"\n+|(?<=[.?!])\s+(?=[A-Z(])", text)
+    return [p.strip() for p in parts if p.strip()]
 
 
 def extract_top_terms_with_phrases(text: str, max_terms: int = 400) -> List[Dict]:
