@@ -314,9 +314,11 @@
         // enumerateDevices() before permission is granted, yet getUserMedia()
         // still succeeds. Let the real getUserMedia() error drive the message.
         let camsVisible = -1;
+        let micsVisible = -1;
         try {
           const devices = await navigator.mediaDevices.enumerateDevices();
           camsVisible = devices.filter(d => d.kind === 'videoinput').length;
+          micsVisible = devices.filter(d => d.kind === 'audioinput').length;
         } catch (e) {
           // enumeration can fail before permission is granted — just continue
         }
@@ -330,11 +332,11 @@
             return await navigator.mediaDevices.getUserMedia(constraints);
           } catch (e) {
             lastErr = e;
-            try { e.diagCams = camsVisible; } catch (_ignored) {}
+            try { e.diagCams = camsVisible; e.diagMic = micsVisible; } catch (_ignored) {}
             if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError' || e.name === 'SecurityError') throw e;
           }
         }
-        if (lastErr) { try { lastErr.diagCams = camsVisible; } catch (_ignored) {} }
+        if (lastErr) { try { lastErr.diagCams = camsVisible; lastErr.diagMic = micsVisible; } catch (_ignored) {} }
         throw lastErr || new Error('Camera unavailable');
       }
 
@@ -374,7 +376,7 @@
             return 'Camera permission BLOCKED. Click the camera icon in the address bar, set Camera to "Allow", then reload and try again.';
           case 'NotFoundError':
           case 'DevicesNotFoundError':
-            return 'No camera found — the browser could not open any webcam. If your PC has one: (1) Windows Settings > Privacy & security > Camera — turn ON "Camera access", "Let apps access your camera", AND scroll down and turn ON "Let desktop apps access your camera" (Chrome and other desktop browsers need this one); (2) in the per-app list under "Let apps access your camera", make sure your browser (Edge/Chrome) is toggled ON; (3) check the physical camera shutter or the F-key camera toggle on your keyboard, and Device Manager > Cameras (enable if disabled); then close other apps using the camera (Zoom/Teams) and reload this page.';
+            return 'No camera found — this browser sees 0 webcams (the Windows Camera app can still work while browsers are blocked).';
           case 'NotReadableError':
           case 'TrackStartError':
             return 'Camera is busy - close other apps/tabs using it (Zoom, Teams, another browser tab) and try again.';
@@ -391,16 +393,33 @@
       // are self-explanatory: how many cameras the browser sees + permission state.
       async function cameraErrorDetails(error) {
         let msg = cameraErrorMessage(error);
+        const errName = error && error.name;
+        const cams = (error && typeof error.diagCams === 'number') ? error.diagCams : -1;
+        const mics = (error && typeof error.diagMic === 'number') ? error.diagMic : -1;
+        let permState = null;
         const parts = [];
-        if (error && typeof error.diagCams === 'number' && error.diagCams >= 0) {
-          parts.push('cameras visible: ' + error.diagCams);
+        if (cams >= 0 || mics >= 0) {
+          parts.push(cams >= 0 ? ('cameras visible: ' + cams + (mics >= 0 ? ' (other devices: audio ' + mics + ')' : '')) : ('audio devices: ' + mics));
         }
         try {
           if (navigator.permissions && navigator.permissions.query) {
             const st = await navigator.permissions.query({ name: 'camera' });
-            parts.push('permission: ' + st.state);
+            permState = st.state;
           }
         } catch (e) { /* Firefox may not support the 'camera' permission name */ }
+
+        // Tailor the fix for the common Windows case: the site permission can
+        // read "granted" while the OS still hides every camera from browsers.
+        if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
+          if (permState === 'granted' && cams === 0) {
+            msg += ' Your browser HAS permission, but Windows is hiding the camera from it. Fix: Windows Settings > Privacy & security > Camera > scroll down and turn ON "Let desktop apps access your camera" (Chrome/Edge count as desktop apps - the Camera app works without that toggle), then reload this page.';
+          } else {
+            msg += ' Check: Windows Settings > Privacy & security > Camera - turn ON "Camera access" and "Let desktop apps access your camera"; Device Manager > Cameras (enable if disabled); the Fn-key camera lock / physical shutter; close Zoom/Teams; then reload.';
+          }
+        }
+        if (permState) parts.push('permission: ' + permState);
+        parts.push('secure context: ' + (window.isSecureContext ? 'yes' : 'NO (open via HTTPS)'));
+        if (errName) parts.push('error: ' + errName + (error && error.message ? ' — ' + error.message : ''));
         if (parts.length) msg += '  [diagnostics: ' + parts.join(' | ') + ']';
         return msg;
       }
@@ -984,7 +1003,7 @@
         
         setTimeout(() => {
           notification.style.display = 'none';
-        }, 3000);
+        }, type === 'error' ? 12000 : 3000);
       }
 
       // Range slider updates
