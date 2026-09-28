@@ -283,17 +283,15 @@
           err.name = 'SecurityError';
           throw err;
         }
-        // Pre-check: does the page see any camera at all?
+        // Pre-check (diagnostic only): how many cameras does the browser see?
+        // NOTE: do NOT hard-fail here — some environments report 0 devices via
+        // enumerateDevices() before permission is granted, yet getUserMedia()
+        // still succeeds. Let the real getUserMedia() error drive the message.
+        let camsVisible = -1;
         try {
           const devices = await navigator.mediaDevices.enumerateDevices();
-          const cams = devices.filter(d => d.kind === 'videoinput');
-          if (cams.length === 0) {
-            const err = new Error('No camera found. If your PC has a webcam: open Windows Settings > Privacy & security > Camera and turn ON both toggles, close other apps using it (Zoom/Teams), then reload this page.');
-            err.name = 'NotFoundError';
-            throw err;
-          }
+          camsVisible = devices.filter(d => d.kind === 'videoinput').length;
         } catch (e) {
-          if (e.name === 'NotFoundError') throw e; // our pre-check error
           // enumeration can fail before permission is granted — just continue
         }
         const attempts = [
@@ -306,10 +304,12 @@
             return await navigator.mediaDevices.getUserMedia(constraints);
           } catch (e) {
             lastErr = e;
+            try { e.diagCams = camsVisible; } catch (_ignored) {}
             // Permission/security problems won't be fixed by retrying looser constraints
             if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError' || e.name === 'SecurityError') throw e;
           }
         }
+        if (lastErr) { try { lastErr.diagCams = camsVisible; } catch (_ignored) {} }
         throw lastErr || new Error('Camera unavailable');
       }
 
@@ -323,7 +323,7 @@
             return 'Camera permission BLOCKED. Click the camera icon in the address bar, set Camera to "Allow", then reload and try again.';
           case 'NotFoundError':
           case 'DevicesNotFoundError':
-            return 'No camera found. If your PC has a webcam: open Windows Settings > Privacy & security > Camera and turn ON both toggles ("Camera access" and "Let apps access your camera"), close other apps using it (Zoom/Teams), then reload this page.';
+            return 'No camera found — the browser could not open any webcam. If your PC has one: (1) Windows Settings > Privacy & security > Camera — turn ON "Camera access", "Let apps access your camera", AND scroll down and turn ON "Let desktop apps access your camera" (Chrome and other desktop browsers need this one); (2) in the per-app list under "Let apps access your camera", make sure your browser (Edge/Chrome) is toggled ON; (3) check the physical camera shutter or the F-key camera toggle on your keyboard, and Device Manager > Cameras (enable if disabled); then close other apps using the camera (Zoom/Teams) and reload this page.';
           case 'NotReadableError':
           case 'TrackStartError':
             return 'Camera is busy — close other apps/tabs using it (Zoom, Teams, another browser tab) and try again.';
@@ -334,6 +334,24 @@
           default:
             return 'Camera error: ' + ((error && (error.name + ': ' + error.message)) || 'unknown');
         }
+      }
+
+      // Enrich the friendly message with live diagnostics so camera problems
+      // are self-explanatory: how many cameras the browser sees + permission state.
+      async function cameraErrorDetails(error) {
+        let msg = cameraErrorMessage(error);
+        const parts = [];
+        if (error && typeof error.diagCams === 'number' && error.diagCams >= 0) {
+          parts.push('cameras visible: ' + error.diagCams);
+        }
+        try {
+          if (navigator.permissions && navigator.permissions.query) {
+            const st = await navigator.permissions.query({ name: 'camera' });
+            parts.push('permission: ' + st.state);
+          }
+        } catch (e) { /* Firefox may not support the 'camera' permission name */ }
+        if (parts.length) msg += '  [diagnostics: ' + parts.join(' | ') + ']';
+        return msg;
       }
 
       async function startCamera() {
@@ -363,7 +381,7 @@
           
         } catch (error) {
           console.error('Camera error:', error);
-          showNotification(cameraErrorMessage(error), 'error');
+          showNotification(await cameraErrorDetails(error), 'error');
         }
       }
 
@@ -538,7 +556,7 @@
           showNotification('Enrollment camera started', 'success');
         } catch (error) {
           console.error('Enrollment camera error:', error);
-          showNotification(cameraErrorMessage(error), 'error');
+          showNotification(await cameraErrorDetails(error), 'error');
         }
       }
 
