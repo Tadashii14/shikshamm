@@ -190,6 +190,19 @@ class TestFaceProxyHonesty:
         assert "result.proxy_mode" in html
         assert "not face-verified" in html
 
+    def test_demo_login_and_admin_camera_are_honest(self):
+        login = client.get("/login").text
+        admin = client.get("/admin").text
+        assert "any email and password work" in login
+        assert "not production authentication" in login
+        assert "super-secret-key" not in login + admin
+        assert "Camera preview active. Demo mode does not verify identity" in admin
+        assert "Camera preview only. Demo attendance must be marked manually." in admin
+        assert "Image captured, but identity matching is unavailable" in admin
+        assert "not identity recognition" in admin
+        assert "manual attendance" in admin.lower()
+        assert "X-Admin-Key" not in admin
+
 
 # --------------------------------------------------------------------------
 # 4. Face image-upload size enforcement (app/routers/face.py)

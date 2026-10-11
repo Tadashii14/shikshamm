@@ -57,6 +57,8 @@ class TestUnreachableRemoteDoesNotFallBack:
             "print('IS_SQLITE', d.DATABASE_URL.startswith('sqlite'))"
         )
         env = dict(os.environ)
+        for key in ("ATTENDAI_HOSTED_RUNTIME", "VERCEL", "VERCEL_ENV", "VERCEL_URL", "RENDER", "RENDER_SERVICE_ID"):
+            env.pop(key, None)
         env["DATABASE_URL"] = env_url
         return subprocess.run(
             [PY, "-c", code], cwd=REPO_ROOT, env=env,
@@ -69,7 +71,7 @@ class TestUnreachableRemoteDoesNotFallBack:
         assert "AVAILABLE False" in out.stdout
         assert "IS_SQLITE False" in out.stdout
         # startup must have logged a clear error and NOT leaked the password
-        assert "ERROR: DATABASE_URL is set but the database is unreachable" in combined
+        assert "WARNING: DATABASE_URL connection probe failed" in combined
         assert "supersecretpw" not in combined
 
     def test_empty_sqlite_url_stays_available(self):
@@ -77,6 +79,46 @@ class TestUnreachableRemoteDoesNotFallBack:
         out = self._import_db("sqlite://")
         assert "AVAILABLE True" in out.stdout
         assert "IS_SQLITE True" in out.stdout
+
+    def test_vercel_without_database_url_fails_closed(self):
+        env = dict(os.environ)
+        env.pop("DATABASE_URL", None)
+        for key in ("ATTENDAI_HOSTED_RUNTIME", "VERCEL", "VERCEL_ENV", "VERCEL_URL", "RENDER", "RENDER_SERVICE_ID"):
+            env.pop(key, None)
+        env["VERCEL"] = "1"
+        out = subprocess.run(
+            [PY, "-c", "import app.db as d; print('AVAILABLE', d.DB_AVAILABLE); print('URL', repr(d.DATABASE_URL))"],
+            cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=60,
+        )
+        assert out.returncode == 0
+        assert "AVAILABLE False" in out.stdout
+        assert "URL ''" in out.stdout
+        assert "attendai.db" not in out.stdout
+
+    def test_render_with_sqlite_url_fails_closed(self):
+        env = dict(os.environ)
+        for key in ("ATTENDAI_HOSTED_RUNTIME", "VERCEL", "VERCEL_ENV", "VERCEL_URL", "RENDER", "RENDER_SERVICE_ID"):
+            env.pop(key, None)
+        env["RENDER"] = "true"
+        env["DATABASE_URL"] = "sqlite:///./attendai_demo.db"
+        code = "import app.db as d; print('AVAILABLE', d.DB_AVAILABLE); print('URL', d.DATABASE_URL)"
+        out = subprocess.run([PY, "-c", code], cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=60)
+        assert out.returncode == 0
+        assert "AVAILABLE False" in out.stdout
+        assert "Persistent database storage is required" in out.stdout + out.stderr
+
+    def test_vercel_entrypoint_marks_runtime_before_importing_app(self):
+        env = dict(os.environ)
+        env.pop("DATABASE_URL", None)
+        for key in ("ATTENDAI_HOSTED_RUNTIME", "VERCEL", "VERCEL_ENV", "VERCEL_URL", "RENDER", "RENDER_SERVICE_ID"):
+            env.pop(key, None)
+        code = "import api.index; import app.db as d; print('AVAILABLE', d.DB_AVAILABLE); print('URL', repr(d.DATABASE_URL))"
+        out = subprocess.run(
+            [PY, "-c", code], cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=60,
+        )
+        assert out.returncode == 0
+        assert "AVAILABLE False" in out.stdout
+        assert "URL ''" in out.stdout
 
 
 class TestHealthHonestyAndNoSecretLeak:
@@ -94,22 +136,26 @@ class TestHealthHonestyAndNoSecretLeak:
     def test_db_error_message_has_no_credentials(self, monkeypatch):
         # Simulate a driver error whose text embeds a DSN with a password.
         monkeypatch.setattr(db, "DB_AVAILABLE", True)
+        monkeypatch.setattr(db, "DB_ERROR", None)
 
         class _Sess:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
             def exec(self, *a, **k):
                 raise RuntimeError(
                     "could not connect to postgresql://user:supersecretpw@host/db"
                 )
 
-            def close(self):
-                pass
-
         import app.services.monitoring as mon
-        monkeypatch.setattr(mon, "get_session", lambda: iter([_Sess()]))
+        monkeypatch.setattr(mon, "Session", lambda _engine: _Sess())
         status = health_checker.check_database()
         assert status["status"] == "unhealthy"
         assert "supersecretpw" not in status["message"]
-        assert status["message"] == "Database connection failed"
+        assert status["message"] == "Database operation failed; check database connectivity and schema."
 
     def test_health_endpoint_still_returns_200(self):
         # Render/Vercel health checks only need HTTP 200; the body carries truth.
@@ -117,3 +163,36 @@ class TestHealthHonestyAndNoSecretLeak:
         assert r.status_code == 200
         body = r.json()
         assert "checks" in body and "database" in body["checks"]
+
+    def test_runtime_database_failure_is_safe_and_returns_503(self, monkeypatch, capsys):
+        secret_dsn = "postgresql://user:supersecretpw@host/database"
+        monkeypatch.setattr(db, "DB_AVAILABLE", True)
+        monkeypatch.setattr(db, "DB_ERROR", None)
+        db.mark_database_unavailable(RuntimeError(f"could not connect to {secret_dsn}"))
+
+        response = client.get("/admin/students/list")
+        assert response.status_code == 503
+        assert "supersecretpw" not in response.text
+
+        health = client.get("/health")
+        assert health.status_code == 200
+        assert "supersecretpw" not in health.text
+        assert "Database unavailable" in health.text
+
+        captured = capsys.readouterr()
+        assert "supersecretpw" not in captured.out + captured.err
+
+    def test_init_failure_marks_database_unhealthy_without_logging_dsn(self, monkeypatch, capsys):
+        monkeypatch.setattr(db, "DB_AVAILABLE", True)
+        monkeypatch.setattr(db, "DB_ERROR", None)
+
+        def fail_create_all(*_args, **_kwargs):
+            raise RuntimeError("connection failed for postgresql://user:supersecretpw@host/database")
+
+        monkeypatch.setattr(db.SQLModel.metadata, "create_all", fail_create_all)
+        init_db()
+
+        assert db.DB_AVAILABLE is False
+        assert "supersecretpw" not in (db.DB_ERROR or "")
+        captured = capsys.readouterr()
+        assert "supersecretpw" not in captured.out + captured.err

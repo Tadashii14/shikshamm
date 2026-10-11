@@ -10,9 +10,8 @@ import psutil
 import structlog
 from app.services.cache import cache
 from app import db as db_module
-from app.db import get_session
 from app.models import User, AttendanceSession
-from sqlmodel import select
+from sqlmodel import Session, select
 
 logger = structlog.get_logger()
 
@@ -39,11 +38,11 @@ class HealthChecker:
                 "message": db_module.DB_ERROR or "Database unavailable",
             }
         try:
-            session = next(get_session())
-            # Test basic query
-            users = session.exec(select(User)).all()
-            users = users[:1]  # Take first user for testing
-            session.close()
+            if db_module.engine is None:
+                raise RuntimeError("database engine is unavailable")
+            with Session(db_module.engine) as session:
+                # Only check that the table is readable; do not load every user.
+                users = session.exec(select(User).limit(1)).all()
 
             return {
                 "status": "healthy",
@@ -53,10 +52,11 @@ class HealthChecker:
         except Exception as e:
             # Never echo the raw exception text: a driver error can embed the
             # DSN (including credentials). Log only the exception type.
-            logger.error(f"Database health check failed: {e.__class__.__name__}")
+            db_module.mark_database_unavailable(e, "health check")
+            logger.error("Database health check failed", error_type=e.__class__.__name__)
             return {
                 "status": "unhealthy",
-                "message": "Database connection failed",
+                "message": db_module.DB_ERROR or "Database connection failed",
             }
 
     def check_cache(self) -> dict:
@@ -129,18 +129,14 @@ class HealthChecker:
 
     def get_application_metrics(self) -> dict:
         """Get application-specific metrics"""
+        if not db_module.DB_AVAILABLE or db_module.engine is None:
+            return {"error": "Database unavailable"}
         try:
-            session = next(get_session())
-            
-            # Count active sessions
-            active_sessions = session.exec(
-                select(AttendanceSession).where(AttendanceSession.is_active == True)
-            ).all()
-            
-            # Count total users
-            total_users = session.exec(select(User)).all()
-            
-            session.close()
+            with Session(db_module.engine) as session:
+                active_sessions = session.exec(
+                    select(AttendanceSession).where(AttendanceSession.is_active == True)
+                ).all()
+                total_users = session.exec(select(User)).all()
             
             # Update Prometheus gauges
             ACTIVE_SESSIONS.set(len(active_sessions))
@@ -152,8 +148,9 @@ class HealthChecker:
                 "cache_available": cache.redis_client is not None
             }
         except Exception as e:
-            logger.error(f"Application metrics collection failed: {e}")
-            return {"error": str(e)}
+            db_module.mark_database_unavailable(e, "application metrics query")
+            logger.error("Application metrics collection failed", error_type=e.__class__.__name__)
+            return {"error": "Database unavailable"}
 
     def get_health_status(self) -> dict:
         """Get overall health status"""

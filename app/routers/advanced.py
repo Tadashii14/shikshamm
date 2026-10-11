@@ -30,7 +30,7 @@ router = APIRouter()
 @router.post("/pdf/extract-text")
 async def extract_pdf_text(file: UploadFile = File(...)):
     """Extract and clean text from PDF"""
-    if not file.filename.endswith('.pdf'):
+    if not file.filename or not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="File must be a PDF")
     
     try:
@@ -64,7 +64,7 @@ async def summarize_pdf(
     sentence_count: int = Form(10)
 ):
     """Generate summary of PDF content"""
-    if not file.filename.endswith('.pdf'):
+    if not file.filename or not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="File must be a PDF")
     
     try:
@@ -99,7 +99,7 @@ async def generate_flashcards(
     explain_max: int = Form(55)
 ):
     """Generate flashcards from PDF content"""
-    if not file.filename.endswith('.pdf'):
+    if not file.filename or not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="File must be a PDF")
     
     try:
@@ -143,7 +143,7 @@ async def generate_quiz(
     num_questions: int = Form(10)
 ):
     """Generate quiz questions from PDF content"""
-    if not file.filename.endswith('.pdf'):
+    if not file.filename or not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="File must be a PDF")
     
     try:
@@ -200,7 +200,7 @@ async def ask_question(
     question: str = Form(...)
 ):
     """Ask a question about PDF content"""
-    if not file.filename.endswith('.pdf'):
+    if not file.filename or not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="File must be a PDF")
     
     try:

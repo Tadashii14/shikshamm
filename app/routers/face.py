@@ -1,13 +1,14 @@
 from __future__ import annotations
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Header, WebSocket
 from sqlmodel import Session, select
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 import os
 try:
     import numpy as np  # Optional on Vercel
 except Exception:
     np = None  # type: ignore
 
-from app.db import get_session
+from app.db import DATABASE_UNAVAILABLE_DETAIL, get_session, mark_database_unavailable
 from app.models import User, AttendanceSession, Attendance
 from app.services.face import compute_face_embedding, cosine_similarity
 from app.services.uploads import read_limited
@@ -72,8 +73,13 @@ async def enroll(user_id: int = Form(...), file: UploadFile = File(...), session
         return {"message": "Face enrolled successfully (proxy mode — face model not available on this deployment)", "proxy_mode": True}
     except HTTPException:
         raise
+    except IntegrityError:
+        raise HTTPException(status_code=409, detail="The attendance or enrollment record conflicts with existing data.") from None
+    except SQLAlchemyError as e:
+        mark_database_unavailable(e, "face route database operation")
+        raise HTTPException(status_code=503, detail=DATABASE_UNAVAILABLE_DETAIL) from None
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Face processing failed") from None
 
 
 @router.post("/verify-and-mark")
@@ -127,8 +133,13 @@ async def verify_and_mark(code: str = Form(...), user_id: int = Form(...), file:
         return {"message": "Attendance marked, face verified", "similarity": sim}
     except HTTPException:
         raise
+    except IntegrityError:
+        raise HTTPException(status_code=409, detail="Attendance was already recorded or conflicts with existing data.") from None
+    except SQLAlchemyError as e:
+        mark_database_unavailable(e, "face route database operation")
+        raise HTTPException(status_code=503, detail=DATABASE_UNAVAILABLE_DETAIL) from None
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Face processing failed") from None
 
 
 @router.post("/auto-identify-and-mark")
@@ -179,8 +190,13 @@ async def auto_identify_and_mark(code: str = Form(...), file: UploadFile = File(
         return {"message": "Marked present", "user_id": best_user_id, "similarity": best_sim}
     except HTTPException:
         raise
+    except IntegrityError:
+        raise HTTPException(status_code=409, detail="The attendance or enrollment record conflicts with existing data.") from None
+    except SQLAlchemyError as e:
+        mark_database_unavailable(e, "face route database operation")
+        raise HTTPException(status_code=503, detail=DATABASE_UNAVAILABLE_DETAIL) from None
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Face processing failed") from None
 
 
 @router.post("/enroll-by-admission")
@@ -207,8 +223,13 @@ async def enroll_by_admission(admission_number: str = Form(...), file: UploadFil
         }
     except HTTPException:
         raise
+    except IntegrityError:
+        raise HTTPException(status_code=409, detail="The attendance or enrollment record conflicts with existing data.") from None
+    except SQLAlchemyError as e:
+        mark_database_unavailable(e, "face route database operation")
+        raise HTTPException(status_code=503, detail=DATABASE_UNAVAILABLE_DETAIL) from None
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Face processing failed") from None
 
 
 @router.post("/verify-by-admission")
@@ -268,8 +289,13 @@ async def verify_by_admission(admission_number: str = Form(...), code: str = For
         return {"message": "Attendance marked, face verified", "user_id": user.id, "similarity": sim, "student_name": user.full_name}
     except HTTPException:
         raise
+    except IntegrityError:
+        raise HTTPException(status_code=409, detail="Attendance was already recorded or conflicts with existing data.") from None
+    except SQLAlchemyError as e:
+        mark_database_unavailable(e, "face route database operation")
+        raise HTTPException(status_code=503, detail=DATABASE_UNAVAILABLE_DETAIL) from None
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Face processing failed") from None
 
 
 @router.get("/attendance")
