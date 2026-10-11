@@ -360,8 +360,14 @@
         // Tailor the fix for the common Windows case: the site permission can
         // read "granted" while the OS still hides every camera from browsers.
         if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
-          if (permState === 'granted' && cams === 0) {
-            msg += ' Your browser HAS permission, but Windows is hiding the camera from it. Fix: Windows Settings > Privacy & security > Camera > scroll down and turn ON "Let desktop apps access your camera" (Chrome/Edge count as desktop apps - the Camera app works without that toggle), then reload this page.';
+          if (cams === 0) {
+            // The browser enumerates ZERO camera devices — there is no webcam for
+            // it to use. A permission toggle cannot create a device, so do NOT
+            // blame Windows app-permissions here; point at the real causes and
+            // the manual-attendance fallback.
+            msg += ' No camera device is available to this browser (0 webcams detected). Check Device Manager > Cameras (enable if disabled), the Fn-key camera lock / privacy shutter, and that a webcam is connected — or present on a machine with a webcam. Manual attendance below works without a camera.';
+          } else if (permState === 'granted') {
+            msg += ' A camera is listed but the OS is blocking apps from it. Fix: Windows Settings > Privacy & security > Camera > turn ON "Let desktop apps access your camera" (Chrome/Edge count as desktop apps), then reload this page.';
           } else {
             msg += ' Check: Windows Settings > Privacy & security > Camera - turn ON "Camera access" and "Let desktop apps access your camera"; Device Manager > Cameras (enable if disabled); the Fn-key camera lock / physical shutter; close Zoom/Teams; then reload.';
           }
