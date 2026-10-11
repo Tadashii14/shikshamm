@@ -2,8 +2,13 @@
 Unit tests for face recognition module
 """
 import pytest
-import numpy as np
 from unittest.mock import patch, MagicMock
+
+# These tests exercise the numpy code path of the face service. When the heavy
+# face stack (numpy/opencv/onnxruntime/insightface) is not installed — e.g. a
+# free-tier/serverless deployment or a lean dev env — skip the module cleanly
+# instead of raising a collection error that aborts the whole test suite.
+np = pytest.importorskip("numpy", reason="numpy not installed; face-service numpy path unavailable")
 from app.services.face import compute_face_embedding, cosine_similarity
 
 class TestFaceRecognition:

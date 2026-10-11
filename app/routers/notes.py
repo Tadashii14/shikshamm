@@ -5,6 +5,7 @@ from typing import List
 
 from app.db import get_session
 from app.models import Note, Flashcard
+from app.services.uploads import read_limited
 # Avoid importing OpenAI-dependent code at startup on serverless
 
 
@@ -13,7 +14,10 @@ router = APIRouter(prefix="/notes", tags=["notes"])
 
 @router.post("/upload")
 async def upload_note(user_id: int = Form(...), class_id: int | None = Form(None), file: UploadFile = File(...), session: Session = Depends(get_session)):
-    content = await file.read()
+    try:
+        content = await read_limited(file)
+    except ValueError as e:
+        raise HTTPException(status_code=413, detail=str(e))
     text = ""
     if file.filename.lower().endswith(".pdf"):
         try:

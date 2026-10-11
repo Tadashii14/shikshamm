@@ -5,6 +5,7 @@ from sqlmodel import Session, select
 
 from app.db import get_session
 from app.models import ClassRoom, AttendanceSession, User, Attendance
+from sqlalchemy.exc import IntegrityError
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -137,22 +138,42 @@ async def mark_manual_attendance(request: Request, session: Session = Depends(ge
     if not sess:
         raise HTTPException(status_code=404, detail="Active session not found")
 
+    # Rejects unknown student ids with a clean 404 instead of a 500
+    if not session.get(User, user_id):
+        raise HTTPException(status_code=404, detail=f"Student with id {user_id} not found")
+
     # Check if already marked
     existing = session.exec(select(Attendance).where(Attendance.session_id == sess.id, Attendance.user_id == user_id)).first()
     if existing:
-        return {"message": "Already marked", "user_id": user_id}
+        raise HTTPException(status_code=409, detail="Attendance already recorded for this session")
 
     # Mark attendance
     att = Attendance(session_id=sess.id, user_id=user_id, status=status)
-    session.add(att)
-    session.commit()
+    try:
+        session.add(att)
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        # Unique-index/race collision -> honest response instead of pretending a row was inserted
+        raise HTTPException(status_code=409, detail="Attendance already recorded (race condition)")
 
     return {"message": "Marked present", "user_id": user_id}
 
 
 @router.get("/attendance/stats/{user_id}")
 def get_attendance_stats(user_id: int, session: Session = Depends(get_session)):
-    """Get real-time attendance statistics for a user"""
+    """Get real-time attendance statistics for a single user.
+
+    The response always echoes the identity the numbers belong to (``user_id``,
+    ``full_name``, ``admission_number``) so the student page can prove it is
+    showing the logged-in student's own data instead of another student's.
+    Unknown ids return 404 instead of a row of zeroes, which used to look like
+    real attendance data.
+    """
+    student = session.get(User, user_id)
+    if not student:
+        raise HTTPException(status_code=404, detail=f"No user with id {user_id}")
+
     # Get all sessions the user has attended
     attended_sessions = session.exec(
         select(AttendanceSession)
@@ -182,6 +203,9 @@ def get_attendance_stats(user_id: int, session: Session = Depends(get_session)):
         last_attendance_date = last_attendance.timestamp.strftime("%Y-%m-%d") if last_attendance.timestamp else "Unknown"
     
     return {
+        "user_id": student.id,
+        "full_name": student.full_name,
+        "admission_number": student.admission_number,
         "total_sessions": total_sessions,
         "attended_sessions": attended_count,
         "attendance_percentage": f"{attendance_percentage}%",

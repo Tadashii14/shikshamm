@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from sqlmodel import Field, SQLModel, Relationship
-from sqlalchemy import Column, JSON
+from sqlalchemy import Column, JSON, UniqueConstraint
 
 
 class User(SQLModel, table=True):
@@ -40,6 +40,8 @@ class Attendance(SQLModel, table=True):
     user_id: int = Field(foreign_key="user.id")
     status: str = Field(default="present")
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint('session_id', 'user_id', name='uq_attendance_session_user'),)
 
 
 class Note(SQLModel, table=True):

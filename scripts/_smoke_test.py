@@ -44,9 +44,20 @@ check("POST /face/verify-by-admission (proxy mark)", client.post("/face/verify-b
 check("POST /face/auto-identify-and-mark", client.post("/face/auto-identify-and-mark", data={"code": "SMKC1"}, files={"file": ("a.png", png2, "image/png")}))
 check("POST /face/verify-and-mark", client.post("/face/verify-and-mark", data={"code": "SMKC1", "user_id": 2}, files={"file": ("a.png", png2, "image/png")}))
 
+# ---- Honesty guard: proxy mode must NOT claim genuine verification or a fabricated score ----
+r = client.post("/face/verify-by-admission", data={"admission_number": "SMK001", "code": "SMKC1"}, files={"file": ("a.png", io.BytesIO(b"\x89PNG\r\n\x1a\n" + b"2" * 64), "image/png")})
+j = r.json() if r.status_code == 200 else {}
+proxy_ok = (j.get("proxy_mode") is True) and (j.get("similarity") is None) and ("not face-verified" in (j.get("message", "").lower()))
+print(f"{'PASS' if proxy_ok else 'FAIL'} face proxy response is honest (proxy_mode, no similarity, not face-verified)")
+results.append((proxy_ok, "face proxy honesty", 0, 0))
+
 # ---- Admin: manual attendance (JSON body, like admin.html sends) ----
-check("POST /admin/attendance/manual (JSON)", client.post("/admin/attendance/manual", json={"session_code": "SMKC1", "user_id": 2, "status": "present"}))
-check("POST /admin/attendance/manual (dup)", client.post("/admin/attendance/manual", json={"session_code": "SMKC1", "user_id": 2, "status": "present"}))
+# Use a dedicated student (users 1 & 2 were already marked on SMKC1 by the face proxy calls above)
+check("POST /admin/students/create", client.post("/admin/students/create", params={"email": "smoke3@test.com", "full_name": "Smoke Three", "admission_number": "SMK003"}))
+check("POST /admin/attendance/manual (valid)", client.post("/admin/attendance/manual", json={"session_code": "SMKC1", "user_id": 3, "status": "present"}), expect=200)
+check("POST /admin/attendance/manual (duplicate -> 409)", client.post("/admin/attendance/manual", json={"session_code": "SMKC1", "user_id": 3, "status": "present"}), expect=409)
+check("POST /admin/attendance/manual (unknown student -> 404)", client.post("/admin/attendance/manual", json={"session_code": "SMKC1", "user_id": 999, "status": "present"}), expect=404)
+check("POST /admin/attendance/manual (unknown session -> 404)", client.post("/admin/attendance/manual", json={"session_code": "NOPE", "user_id": 3, "status": "present"}), expect=404)
 check("GET /admin/students/list", client.get("/admin/students/list"))
 check("GET /admin/attendance/stats/1", client.get("/admin/attendance/stats/1"))
 check("POST /admin/sessions/stop", client.post("/admin/sessions/stop", params={"code": "SMKC1"}))

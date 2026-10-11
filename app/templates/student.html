@@ -512,7 +512,11 @@
             showNotification(result.message, 'info');
             return;
           }
-          document.getElementById('faceMsg').textContent = `✅ Attendance marked, face verified. Similarity: ${(result.similarity || 0).toFixed(2)}`;
+          if (result && result.proxy_mode) {
+            document.getElementById('faceMsg').textContent = `✅ ${result.message || 'Attendance marked'} (demo mode — not face-verified)`;
+          } else {
+            document.getElementById('faceMsg').textContent = `✅ Attendance marked, face verified. Similarity: ${(result.similarity || 0).toFixed(2)}`;
+          }
           document.getElementById('faceMsg').className = 'status-message success';
           document.getElementById('faceMsg').style.display = 'block';
           showNotification('🎉 Attendance marked successfully!', 'success');

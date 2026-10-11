@@ -11,6 +11,17 @@ from app.services.pdf_processor import (
     summarize_main_points, generate_paragraph_flashcards, generate_global_fallback_flashcards,
     build_qa_index, answer_question, generate_moderate_questions, generate_flashcards_from_text
 )
+from app.services.uploads import read_limited
+
+
+async def _read_upload(file: UploadFile) -> bytes:
+    """Read an upload with a size cap; oversized files -> 413 instead of OOM."""
+    try:
+        return await read_limited(file)
+    except ValueError as e:
+        raise HTTPException(status_code=413, detail=str(e))
+
+
 # Avoid importing heavy timetable integrations (pandas) at startup on serverless
 
 router = APIRouter()
@@ -23,7 +34,7 @@ async def extract_pdf_text(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="File must be a PDF")
     
     try:
-        content = await file.read()
+        content = await _read_upload(file)
         import io
         text = extract_text_from_pdf(io.BytesIO(content))
         
@@ -57,7 +68,7 @@ async def summarize_pdf(
         raise HTTPException(status_code=400, detail="File must be a PDF")
     
     try:
-        content = await file.read()
+        content = await _read_upload(file)
         import io
         text = extract_text_from_pdf(io.BytesIO(content))
         
@@ -92,7 +103,7 @@ async def generate_flashcards(
         raise HTTPException(status_code=400, detail="File must be a PDF")
     
     try:
-        content = await file.read()
+        content = await _read_upload(file)
         import io
         text = extract_text_from_pdf(io.BytesIO(content))
         
@@ -136,7 +147,7 @@ async def generate_quiz(
         raise HTTPException(status_code=400, detail="File must be a PDF")
     
     try:
-        content = await file.read()
+        content = await _read_upload(file)
         import io
         text = extract_text_from_pdf(io.BytesIO(content))
         
@@ -193,7 +204,7 @@ async def ask_question(
         raise HTTPException(status_code=400, detail="File must be a PDF")
     
     try:
-        content = await file.read()
+        content = await _read_upload(file)
         import io
         text = extract_text_from_pdf(io.BytesIO(content))
         

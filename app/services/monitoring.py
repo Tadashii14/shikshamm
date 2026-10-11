@@ -9,6 +9,7 @@ import time
 import psutil
 import structlog
 from app.services.cache import cache
+from app import db as db_module
 from app.db import get_session
 from app.models import User, AttendanceSession
 from sqlmodel import select
@@ -29,23 +30,33 @@ class HealthChecker:
 
     def check_database(self) -> dict:
         """Check database connectivity and health"""
+        # If startup already determined a configured database is unreachable,
+        # report that honestly (without attempting a query that could hang or
+        # echo the connection string). See app.db.DB_AVAILABLE / DB_ERROR.
+        if not db_module.DB_AVAILABLE:
+            return {
+                "status": "unhealthy",
+                "message": db_module.DB_ERROR or "Database unavailable",
+            }
         try:
             session = next(get_session())
             # Test basic query
             users = session.exec(select(User)).all()
             users = users[:1]  # Take first user for testing
             session.close()
-            
+
             return {
                 "status": "healthy",
                 "message": "Database connection successful",
                 "users_count": len(users)
             }
         except Exception as e:
-            logger.error(f"Database health check failed: {e}")
+            # Never echo the raw exception text: a driver error can embed the
+            # DSN (including credentials). Log only the exception type.
+            logger.error(f"Database health check failed: {e.__class__.__name__}")
             return {
                 "status": "unhealthy",
-                "message": f"Database connection failed: {str(e)}"
+                "message": "Database connection failed",
             }
 
     def check_cache(self) -> dict:

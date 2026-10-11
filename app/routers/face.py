@@ -10,6 +10,7 @@ except Exception:
 from app.db import get_session
 from app.models import User, AttendanceSession, Attendance
 from app.services.face import compute_face_embedding, cosine_similarity
+from app.services.uploads import read_limited
 
 router = APIRouter(prefix="/face", tags=["face"]) 
 
@@ -31,6 +32,16 @@ def is_face_strict() -> bool:
     return str(os.getenv("FACE_STRICT", "false")).strip().lower() in {"1", "true", "yes", "on"}
 
 
+async def _read_face_image(file: UploadFile) -> bytes:
+    """Read an uploaded face image with the same 15 MB cap used for PDFs/notes.
+    Raises HTTP 413 while reading (incrementally) if the upload is too large;
+    never loads the whole oversized file into memory."""
+    try:
+        return await read_limited(file)
+    except ValueError as e:
+        raise HTTPException(status_code=413, detail=str(e))
+
+
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket, user_id: str):
     await websocket.accept()
@@ -45,7 +56,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
 @router.post("/enroll")
 async def enroll(user_id: int = Form(...), file: UploadFile = File(...), session: Session = Depends(get_session)):
     try:
-        data = await file.read()
+        data = await _read_face_image(file)
         emb = compute_face_embedding(data)
         if emb is None and is_face_strict():
             raise HTTPException(status_code=400, detail="No face detected")
@@ -79,14 +90,14 @@ async def verify_and_mark(code: str = Form(...), user_id: int = Form(...), file:
                 select(Attendance).where(Attendance.session_id == sess.id, Attendance.user_id == user_id)
             ).first()
             if existing:
-                return {"message": "Attendance marked, face verified"}
+                return {"message": "Attendance already marked (demo mode — not face-verified)", "user_id": user_id, "proxy_mode": True}
             att = Attendance(session_id=sess.id, user_id=user_id, status="present")
             session.add(att)
             session.commit()
-            await notify_user(user_id, f"✅ Attendance marked, face verified — session {sess.code}")
-            return {"message": "Attendance marked, face verified", "similarity": 1.0}
+            await notify_user(user_id, f"Attendance marked (demo mode) — session {sess.code}")
+            return {"message": "Attendance marked (demo mode — not face-verified)", "user_id": user_id, "proxy_mode": True}
 
-        data = await file.read()
+        data = await _read_face_image(file)
         emb = compute_face_embedding(data)
         if emb is None:
             raise HTTPException(status_code=400, detail="No face detected")
@@ -127,7 +138,7 @@ async def auto_identify_and_mark(code: str = Form(...), file: UploadFile = File(
         if admin_key and (x_admin_key is None or x_admin_key != admin_key):
             raise HTTPException(status_code=403, detail="Forbidden")
         
-        data = await file.read()
+        data = await _read_face_image(file)
         emb = compute_face_embedding(data)
         if emb is None:
             # Gracefully degrade on cloud/free-tier where face model may be unavailable
@@ -175,7 +186,7 @@ async def auto_identify_and_mark(code: str = Form(...), file: UploadFile = File(
 @router.post("/enroll-by-admission")
 async def enroll_by_admission(admission_number: str = Form(...), file: UploadFile = File(...), session: Session = Depends(get_session)):
     try:
-        data = await file.read()
+        data = await _read_face_image(file)
         emb = compute_face_embedding(data)
         if emb is None and is_face_strict():
             raise HTTPException(status_code=400, detail="No face detected")
@@ -217,14 +228,14 @@ async def verify_by_admission(admission_number: str = Form(...), code: str = For
                 select(Attendance).where(Attendance.session_id == sess.id, Attendance.user_id == user.id)
             ).first()
             if existing:
-                return {"message": "Attendance marked, face verified", "user_id": user.id, "similarity": 1.0, "student_name": user.full_name}
+                return {"message": "Attendance already marked (demo mode — not face-verified)", "user_id": user.id, "proxy_mode": True, "student_name": user.full_name}
             att = Attendance(session_id=sess.id, user_id=user.id, status="present")
             session.add(att)
             session.commit()
-            await notify_user(user.id, f"✅ Attendance marked, face verified — session {sess.code}")
-            return {"message": "Attendance marked, face verified", "user_id": user.id, "similarity": 1.0, "student_name": user.full_name}
+            await notify_user(user.id, f"Attendance marked (demo mode) — session {sess.code}")
+            return {"message": "Attendance marked (demo mode — not face-verified)", "user_id": user.id, "proxy_mode": True, "student_name": user.full_name}
 
-        data = await file.read()
+        data = await _read_face_image(file)
         emb = compute_face_embedding(data)
         if emb is None:
             # Graceful response to avoid frontend error toasts on cloud/free-tier

@@ -24,13 +24,21 @@ def student_attendance(user_id: int, days: int = 60, session: Session = Depends(
         .where(Attendance.timestamp >= since)
         .order_by(Attendance.timestamp.desc())
     ).all()
-    total = len(attns)
+    total_marked = len(attns)
     present = sum(1 for a in attns if a.status == "present")
-    pct = (present / total * 100.0) if total else 0.0
+    # Honest denominator: the sessions that actually happened in this window,
+    # not the number of attendance rows (which are all "present"). Reporting
+    # present/marked here would always be 100% even if the student missed classes.
+    applicable_sessions = session.exec(
+        select(AttendanceSession).where(AttendanceSession.started_at >= since)
+    ).all()
+    total_sessions = len(applicable_sessions)
+    pct = (present / total_sessions * 100.0) if total_sessions else 0.0
     return {
         "user_id": user_id,
         "window_days": days,
-        "total_marked": total,
+        "total_marked": total_marked,
+        "total_sessions": total_sessions,
         "present": present,
         "attendance_pct": round(pct, 2),
         "recent": [
