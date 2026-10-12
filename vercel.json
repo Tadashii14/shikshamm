@@ -3,6 +3,18 @@
   "builds": [
     { "src": "api/index.py", "use": "@vercel/python" }
   ],
+  "redirects": [
+    {
+      "source": "/",
+      "destination": "https://attendai-api.onrender.com/",
+      "permanent": false
+    },
+    {
+      "source": "/:path*",
+      "destination": "https://attendai-api.onrender.com/:path*",
+      "permanent": false
+    }
+  ],
   "routes": [
     { "src": "/(.*)", "dest": "api/index.py" }
   ],
