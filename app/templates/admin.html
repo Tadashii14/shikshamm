@@ -371,13 +371,6 @@
         } finally {
           clearTimeout(inventoryTimer);
         }
-        if (camsVisible === 0) {
-          const error = new Error('This browser exposes no video devices.');
-          error.name = 'NotFoundError';
-          error.diagCams = camsVisible;
-          error.diagMic = micsVisible;
-          throw error;
-        }
         const attempts = [
           { video: { width: { ideal: 320 }, height: { ideal: 240 }, facingMode: 'user', frameRate: { ideal: 10, max: 15 } } },
           { video: true },
@@ -434,6 +427,7 @@
         const mics = (error && typeof error.diagMic === 'number') ? error.diagMic : -1;
         let permState = null;
         const parts = [];
+        const cameraOrigin = window.location.origin;
         if (cams >= 0 || mics >= 0) {
           parts.push(cams >= 0 ? ('cameras visible: ' + cams + (mics >= 0 ? ' (other devices: audio ' + mics + ')' : '')) : ('audio devices: ' + mics));
         }
@@ -447,20 +441,19 @@
         // Tailor the fix for the common Windows case: the site permission can
         // read "granted" while the OS still hides every camera from browsers.
         if (errName === 'TimeoutError' && permState === 'prompt') {
-          msg += ' The browser still has this page set to "Ask" for camera access. Allow camera for http://127.0.0.1:8765 in the browser site controls, reload, and retry.';
+          msg += ' The browser still has this page set to "Ask" for camera access. Allow camera for ' + cameraOrigin + ' in the browser site controls, reload, and retry.';
         } else if (errName === 'TimeoutError' && permState === 'granted') {
           msg += ' This page is allowed, but the browser did not return a camera. Check Windows desktop-app camera access and close other camera apps.';
         } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
           if (permState === 'prompt') {
-            msg += ' This browser reports that this exact page still has camera access set to "Ask" and exposes 0 cameras. Set Camera to Allow for http://127.0.0.1:8765 in the address-bar site controls, reload, and retry. If it still sees 0, check Windows Settings > Privacy & security > Camera > Let desktop apps access your camera.';
+            msg += ' This browser reports that this exact page still has camera access set to "Ask" and exposes 0 cameras. Set Camera to Allow for ' + cameraOrigin + ' in the address-bar site controls, reload, and retry. If it still sees 0, check Windows Settings > Privacy & security > Camera > Let desktop apps access your camera.';
           } else if (permState === 'denied') {
             msg += ' This browser has blocked camera access for this site. Use the camera/site controls in the address bar to set Camera to Allow, then reload and retry.';
           } else if (permState === 'granted') {
-            msg += ' Camera permission is granted for this page, but the browser still exposes no usable camera. The app cannot choose a device the browser does not list. Check browser/device-driver access, close other camera apps, then restart the browser. Manual attendance remains available.';
+            msg += ' Camera permission is granted for this page, but the browser still exposes no usable camera. The app cannot choose a device the browser does not list. Check Windows desktop-app camera access and browser/device-driver access, close other camera apps, then reload. Manual attendance remains available.';
           } else if (cams === 0) {
-            // The browser enumerates ZERO camera devices — there is no webcam for
-            // it to use. The device can still work in Windows Camera while
-            // desktop-app privacy settings block Chrome from seeing it.
+            // Windows Camera may work even while desktop-app privacy settings
+            // block this browser from enumerating the webcam.
             msg += ' This browser lists 0 cameras. Check Windows Settings > Privacy & security > Camera > Camera access and Let desktop apps access your camera, close other camera apps, then reload. Manual attendance remains available.';
           } else {
             msg += ' Check: Windows Settings > Privacy & security > Camera - turn ON "Camera access" and "Let desktop apps access your camera"; Device Manager > Cameras (enable if disabled); the Fn-key camera lock / physical shutter; close Zoom/Teams; then reload.';
@@ -547,6 +540,11 @@
         localPreviewStates.delete(imageElement);
       }
 
+      function isLocalCameraServerOrigin() {
+        const hostname = window.location.hostname.toLowerCase();
+        return ['localhost', '127.0.0.1', '::1', '[::1]'].includes(hostname) || hostname.endsWith('.localhost');
+      }
+
       async function startCameraSource(videoElement, imageElement) {
         try {
           const stream = await getUserMediaSafe();
@@ -561,6 +559,9 @@
           videoElement.srcObject = null;
           videoElement.hidden = true;
           imageElement.hidden = false;
+          // A hosted server cannot access the visitor's webcam. Only try the
+          // OpenCV server-camera fallback when this page itself is on loopback.
+          if (!isLocalCameraServerOrigin()) throw browserError;
           const response = await fetch('/camera/status', { cache: 'no-store' });
           const status = await response.json().catch(() => ({}));
           if (!response.ok || !status.available) {
