@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import math
 from functools import lru_cache
 from typing import Optional, Tuple
 
@@ -123,6 +124,14 @@ def face_match_threshold(embedding) -> float:
         return 0.35
 
 
+def face_match_margin(embedding) -> float:
+    """Require more separation from the weaker LBP fallback than neural embeddings can provide."""
+    try:
+        return 0.01 if len(embedding) == 4096 else 0.06
+    except Exception:
+        return 0.06
+
+
 def _read_image_from_bytes(image_bytes: bytes):
     try:
         import cv2  # type: ignore
@@ -170,16 +179,26 @@ def cosine_similarity(a, b) -> float:
         # Simple pure-Python cosine
         def norm(v):
             return sum(x*x for x in v) ** 0.5
+        try:
+            if len(a) != len(b) or not a or any(not math.isfinite(float(x)) for x in a) or any(not math.isfinite(float(x)) for x in b):
+                return 0.0
+        except (TypeError, ValueError):
+            return 0.0
         na = norm(a) + 1e-8
         nb = norm(b) + 1e-8
         dot = sum(float(x) * float(y) for x, y in zip(a, b))
-        return float(dot / (na * nb))
-    a = np.asarray(a, dtype=np.float32).reshape(-1)
-    b = np.asarray(b, dtype=np.float32).reshape(-1)
-    if a.size != b.size or not a.size:
+        similarity = float(dot / (na * nb))
+        return similarity if math.isfinite(similarity) else 0.0
+    try:
+        a = np.asarray(a, dtype=np.float32).reshape(-1)
+        b = np.asarray(b, dtype=np.float32).reshape(-1)
+    except (TypeError, ValueError):
+        return 0.0
+    if a.size != b.size or not a.size or not np.isfinite(a).all() or not np.isfinite(b).all():
         return 0.0
     a_norm = a / (np.linalg.norm(a) + 1e-8)
     b_norm = b / (np.linalg.norm(b) + 1e-8)
-    return float(np.dot(a_norm, b_norm))
+    similarity = float(np.dot(a_norm, b_norm))
+    return similarity if math.isfinite(similarity) else 0.0
 
 

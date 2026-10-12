@@ -14,6 +14,7 @@ from app.services.face import (
     _lbp_descriptor,
     compute_face_embedding,
     cosine_similarity,
+    face_match_margin,
     face_match_threshold,
 )
 from app.routers import face as face_router
@@ -66,7 +67,7 @@ class TestFaceRecognition:
 
         monkeypatch.setattr(face_router, "_rank_face_users", lambda _embedding, _users: [(1, 0.90), (2, 0.89)])
         embeddings = [np.zeros(512, dtype=np.float32) for _ in range(5)]
-        with pytest.raises(HTTPException, match="ambiguous") as error:
+        with pytest.raises(HTTPException, match="inconclusive") as error:
             face_router._identify_consistent_user(embeddings, [SimpleNamespace(id=1), SimpleNamespace(id=2)])
         assert error.value.status_code == 401
 
@@ -103,6 +104,22 @@ class TestFaceRecognition:
         vec2 = np.array([-1.0, 0.0, 0.0])
         similarity = cosine_similarity(vec1, vec2)
         assert abs(similarity - (-1.0)) < 0.001
+
+    def test_cosine_similarity_treats_corrupt_embeddings_as_non_matches(self):
+        assert cosine_similarity(np.array([np.nan, 1.0]), np.array([1.0, 0.0])) == 0.0
+        assert cosine_similarity(np.array([np.inf, 1.0]), np.array([1.0, 0.0])) == 0.0
+        assert cosine_similarity(np.array([1.0, 0.0]), np.array([1.0])) == 0.0
+
+    def test_face_ranking_skips_corrupt_and_incompatible_profiles(self):
+        from types import SimpleNamespace
+
+        users = [
+            SimpleNamespace(id=1, face_embedding=[1.0, 0.0]),
+            SimpleNamespace(id=2, face_embedding=[float("nan"), 1.0]),
+            SimpleNamespace(id=3, face_embedding=[1.0]),
+        ]
+        ranked = face_router._rank_face_users(np.array([1.0, 0.0]), users)
+        assert ranked == [(1, 1.0)]
 
     @patch('app.services.face._read_image_from_bytes', return_value=np.zeros((16, 16, 3), dtype=np.uint8))
     @patch('app.services.face.get_insightface_model')
@@ -165,7 +182,20 @@ class TestFaceRecognition:
         assert embedding.shape == (4096,)
         assert abs(cosine_similarity(embedding, embedding) - 1.0) < 0.001
         assert face_match_threshold(embedding) == 0.82
+        assert face_match_margin(embedding) == 0.01
         assert face_match_threshold([0.1] * 512) == 0.35
+        assert face_match_margin([0.1] * 512) == 0.06
+
+    def test_consistent_lbp_match_uses_calibrated_small_margin(self, monkeypatch):
+        from types import SimpleNamespace
+
+        monkeypatch.setattr(face_router, "_rank_face_users", lambda _embedding, _users: [(1, 0.90), (2, 0.88)])
+        embeddings = [np.zeros(4096, dtype=np.float32) for _ in range(5)]
+        user_id, similarity = face_router._identify_consistent_user(
+            embeddings, [SimpleNamespace(id=1), SimpleNamespace(id=2)]
+        )
+        assert user_id == 1
+        assert similarity == 0.90
 
     def test_face_strict_defaults_to_real_matching(self, monkeypatch):
         from app.routers.face import is_face_strict

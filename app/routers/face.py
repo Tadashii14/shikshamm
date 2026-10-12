@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, H
 from sqlmodel import Session, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 import os
+import math
 try:
     import numpy as np  # Optional on Vercel
 except Exception:
@@ -10,7 +11,7 @@ except Exception:
 
 from app.db import DATABASE_UNAVAILABLE_DETAIL, get_session, mark_database_unavailable
 from app.models import User, AttendanceSession, Attendance
-from app.services.face import compute_face_embedding, cosine_similarity, face_match_threshold, get_face_backend
+from app.services.face import compute_face_embedding, cosine_similarity, face_match_margin, face_match_threshold, get_face_backend
 from app.services.uploads import read_limited
 from app.notifications import manager, notify_user as send_notification
 
@@ -18,7 +19,6 @@ router = APIRouter(prefix="/face", tags=["face"])
 
 AUTO_ATTENDANCE_FRAME_COUNT = 5
 MIN_CONSISTENT_FACE_MATCHES = 3
-MIN_FACE_MATCH_MARGIN = 0.06
 
 
 async def _face_embeddings_from_frames(files: list[UploadFile]):
@@ -38,7 +38,13 @@ def _rank_face_users(embedding, users: list[User]):
                 np.array(user.face_embedding, dtype=np.float32)
                 if np is not None else list(map(float, user.face_embedding))
             )
-            ranked.append((user.id, cosine_similarity(embedding, user_embedding)))
+            if len(embedding) != len(user_embedding) or any(
+                not math.isfinite(float(value)) for value in user_embedding
+            ):
+                continue
+            similarity = cosine_similarity(embedding, user_embedding)
+            if math.isfinite(similarity):
+                ranked.append((user.id, similarity))
         except Exception:
             continue
     ranked.sort(key=lambda item: item[1], reverse=True)
@@ -51,8 +57,8 @@ def _identify_consistent_user(embeddings, users: list[User]) -> tuple[int, float
         ranked = _rank_face_users(embedding, users)
         if not ranked or ranked[0][1] < face_match_threshold(embedding):
             continue
-        if len(ranked) > 1 and ranked[0][1] - ranked[1][1] < MIN_FACE_MATCH_MARGIN:
-            raise HTTPException(status_code=401, detail="Face match is ambiguous; ensure only one person is in view and try again")
+        if len(ranked) > 1 and ranked[0][1] - ranked[1][1] < face_match_margin(embedding):
+            raise HTTPException(status_code=401, detail="Face match is inconclusive because enrolled profiles are too similar. Re-enroll this student's face in bright, front-facing light, or mark attendance manually")
         frame_matches.append(ranked[0])
 
     if len(frame_matches) < MIN_CONSISTENT_FACE_MATCHES:
