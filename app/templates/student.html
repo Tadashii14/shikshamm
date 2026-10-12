@@ -499,16 +499,32 @@
 
       async function captureCameraBlob(videoElement, imageElement) {
         const source = !imageElement.hidden ? imageElement : videoElement;
-        const width = source === imageElement ? imageElement.naturalWidth : videoElement.videoWidth;
-        const height = source === imageElement ? imageElement.naturalHeight : videoElement.videoHeight;
-        if (!width || !height) throw new Error('Camera preview has no frame yet. Wait a moment and try again.');
+        const isImage = source === imageElement;
+        // The local MJPEG preview replaces its image element every few hundred
+        // milliseconds. Give that refresh (or a newly opened video) time to
+        // produce a drawable frame before encoding it.
+        let width = 0;
+        let height = 0;
+        for (let attempt = 0; attempt < 20; attempt++) {
+          width = isImage ? imageElement.naturalWidth : videoElement.videoWidth;
+          height = isImage ? imageElement.naturalHeight : videoElement.videoHeight;
+          const ready = width > 0 && height > 0 &&
+            (isImage ? imageElement.complete : videoElement.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA);
+          if (ready) break;
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        if (!width || !height || (isImage ? !imageElement.complete : videoElement.readyState < HTMLMediaElement.HAVE_CURRENT_DATA)) {
+          throw new Error('Camera is still starting. Keep the camera open and retry in a moment.');
+        }
         const canvas = document.createElement('canvas');
         const scale = Math.min(1, 640 / width, 480 / height);
         const outputWidth = Math.max(1, Math.round(width * scale));
         const outputHeight = Math.max(1, Math.round(height * scale));
         canvas.width = outputWidth;
         canvas.height = outputHeight;
-        canvas.getContext('2d').drawImage(source, 0, 0, outputWidth, outputHeight);
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('Could not prepare the camera frame.');
+        context.drawImage(source, 0, 0, outputWidth, outputHeight);
         const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
         if (!blob) throw new Error('Could not encode the camera frame.');
         return blob;
