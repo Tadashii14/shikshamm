@@ -3,19 +3,14 @@
   "builds": [
     { "src": "api/index.py", "use": "@vercel/python" }
   ],
-  "redirects": [
-    {
-      "source": "/",
-      "destination": "https://attendai-api.onrender.com/",
-      "permanent": false
-    },
-    {
-      "source": "/:path*",
-      "destination": "https://attendai-api.onrender.com/:path*",
-      "permanent": false
-    }
-  ],
   "routes": [
+    {
+      "src": "/(.*)",
+      "headers": {
+        "Location": "https://attendai-api.onrender.com/$1"
+      },
+      "status": 307
+    },
     { "src": "/(.*)", "dest": "api/index.py" }
   ],
   "installCommand": "pip install -r requirements-vercel.txt",
