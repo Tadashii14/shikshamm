@@ -39,6 +39,87 @@ def get_insightface_model():
         return None
 
 
+def _opencv_lbp_embedding(image):
+    """Return a CPU-only LBP face descriptor when InsightFace is unavailable.
+
+    This classic local descriptor is suitable for a student-project demo. It is
+    less robust than InsightFace and is not a liveness or anti-spoofing check.
+    """
+    try:
+        import cv2  # type: ignore
+
+        if np is None:
+            return None
+        cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        detector = cv2.CascadeClassifier(cascade_path)
+        if detector.empty():
+            return None
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        faces = detector.detectMultiScale(
+            gray,
+            scaleFactor=1.1,
+            minNeighbors=5,
+            minSize=(64, 64),
+        )
+        if len(faces) == 0:
+            return None
+        x, y, width, height = max(faces, key=lambda box: int(box[2]) * int(box[3]))
+        face = cv2.equalizeHist(gray[y : y + height, x : x + width])
+        face = cv2.resize(face, (128, 128), interpolation=cv2.INTER_AREA)
+        return _lbp_descriptor(face)
+    except Exception as exc:
+        print(f"OpenCV LBP face processing failed ({exc.__class__.__name__})")
+        return None
+
+
+def _lbp_descriptor(face_gray):
+    """Build a normalized 4x4-grid LBP histogram from a grayscale face crop."""
+    if np is None:
+        return None
+    center = face_gray[1:-1, 1:-1]
+    code = np.zeros(center.shape, dtype=np.uint8)
+    neighbors = (
+        face_gray[:-2, :-2], face_gray[:-2, 1:-1], face_gray[:-2, 2:], face_gray[1:-1, 2:],
+        face_gray[2:, 2:], face_gray[2:, 1:-1], face_gray[2:, :-2], face_gray[1:-1, :-2],
+    )
+    for bit, neighbor in enumerate(neighbors):
+        code |= (neighbor >= center).astype(np.uint8) << bit
+
+    descriptors = []
+    for row in np.array_split(code, 4, axis=0):
+        for cell in np.array_split(row, 4, axis=1):
+            histogram = np.histogram(cell, bins=256, range=(0, 256))[0].astype(np.float32)
+            histogram /= max(float(histogram.sum()), 1.0)
+            descriptors.append(np.sqrt(histogram))
+    vector = np.concatenate(descriptors).astype(np.float32)
+    return vector / (np.linalg.norm(vector) + 1e-8)
+
+
+def get_face_backend() -> str | None:
+    """Identify the real, loaded recognition backend without claiming proxy mode."""
+    if get_insightface_model() is not None:
+        return "insightface"
+    if np is None:
+        return None
+    try:
+        import cv2  # type: ignore
+
+        detector = cv2.CascadeClassifier(
+            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        )
+        return "opencv-lbp" if not detector.empty() else None
+    except Exception:
+        return None
+
+
+def face_match_threshold(embedding) -> float:
+    """Use a threshold calibrated for the stored embedding type."""
+    try:
+        return 0.82 if len(embedding) == 4096 else 0.35
+    except Exception:
+        return 0.35
+
+
 def _read_image_from_bytes(image_bytes: bytes):
     try:
         import cv2  # type: ignore
@@ -66,20 +147,17 @@ def compute_face_embedding(image_bytes: bytes):
         if image is None:
             return None
         model = get_insightface_model()
-        if model is None:
-            print("Face recognition model not available")
-            return None
-        faces = model.get(image)
-        if not faces:
-            return None
-        # Use the largest face
-        face = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
-        emb = face.normed_embedding
-        if emb is None:
-            return None
-        if np is None:
-            return None
-        return np.array(emb, dtype=np.float32)
+        if model is not None:
+            faces = model.get(image)
+            if not faces:
+                return None
+            # Use the largest face
+            face = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
+            emb = face.normed_embedding
+            if emb is None or np is None:
+                return None
+            return np.array(emb, dtype=np.float32)
+        return _opencv_lbp_embedding(image)
     except Exception as e:
         print(f"Face embedding computation failed: {e}")
         return None
@@ -94,6 +172,10 @@ def cosine_similarity(a, b) -> float:
         nb = norm(b) + 1e-8
         dot = sum(float(x) * float(y) for x, y in zip(a, b))
         return float(dot / (na * nb))
+    a = np.asarray(a, dtype=np.float32).reshape(-1)
+    b = np.asarray(b, dtype=np.float32).reshape(-1)
+    if a.size != b.size or not a.size:
+        return 0.0
     a_norm = a / (np.linalg.norm(a) + 1e-8)
     b_norm = b / (np.linalg.norm(b) + 1e-8)
     return float(np.dot(a_norm, b_norm))

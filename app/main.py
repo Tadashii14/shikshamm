@@ -18,6 +18,7 @@ from app.routers import face as face_router
 from app.routers import stats as stats_router
 from app.routers import notes as notes_router
 from app.routers import advanced as advanced_router
+from app.routers import camera as camera_router
 from app.notifications import manager
 from app.services.logging import configure_logging, log_api_request
 from app.services.monitoring import health_checker, get_metrics, REQUEST_COUNT, REQUEST_DURATION
@@ -138,6 +139,7 @@ app.include_router(face_router.router)
 app.include_router(stats_router.router)
 app.include_router(notes_router.router)
 app.include_router(advanced_router.router, prefix="/api/advanced", tags=["Advanced Features"])
+app.include_router(camera_router.router)
 
 
 # ----------------- WebSocket -----------------

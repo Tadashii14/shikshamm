@@ -22,14 +22,14 @@ class ConnectionManager:
         if not connections:
             self.user_id_to_connections.pop(user_id, None)
 
-    async def send_text(self, user_id: str, message: str) -> None:
+    async def send_notification(self, user_id: str, message: str) -> None:
         connections = self.user_id_to_connections.get(user_id)
         if not connections:
             return
         to_remove: Set[WebSocket] = set()
         for ws in list(connections):
             try:
-                await ws.send_text(message)
+                await ws.send_json({"message": message})
             except Exception:
                 to_remove.add(ws)
         for ws in to_remove:
@@ -40,7 +40,7 @@ manager = ConnectionManager()
 
 
 async def notify_user(user_id: int | str, message: str) -> None:
-    await manager.send_text(str(user_id), message)
+    await manager.send_notification(str(user_id), message)
 
 
 

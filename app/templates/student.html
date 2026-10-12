@@ -40,6 +40,7 @@
         <div class="camera-container">
           <div class="camera-wrapper">
             <video id="camera" autoplay muted playsinline></video>
+            <img id="cameraLocal" class="camera-local-feed" alt="Local camera preview" hidden />
             <div class="camera-overlay">
               <div class="camera-placeholder" id="cameraPlaceholder">
                 <div class="camera-icon">📹</div>
@@ -79,19 +80,19 @@
         <h2>📊 Attendance Statistics</h2>
         <div class="stats-grid">
           <div class="stat-card">
-            <div class="stat-number" id="totalSessions">12</div>
+            <div class="stat-number" id="totalSessions">—</div>
             <div class="stat-label">Total Sessions</div>
         </div>
           <div class="stat-card">
-            <div class="stat-number" id="attendedSessions">10</div>
+            <div class="stat-number" id="attendedSessions">—</div>
             <div class="stat-label">Attended</div>
           </div>
           <div class="stat-card">
-            <div class="stat-number" id="attendancePercentage">83%</div>
+            <div class="stat-number" id="attendancePercentage">—</div>
             <div class="stat-label">Attendance %</div>
           </div>
           <div class="stat-card">
-            <div class="stat-number" id="lastAttendance">Today</div>
+            <div class="stat-number" id="lastAttendance">—</div>
             <div class="stat-label">Last Attendance</div>
           </div>
         </div>
@@ -280,6 +281,15 @@
             s.src = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.13/dist/face-api.js';
             s.onload = async () => {
               try {
+                // Detection runs only when a frame is captured. Use the CPU
+                // backend so it still works when WebGL or CDN WASM is blocked.
+                const tf = faceapi.tf;
+                if (!tf || typeof tf.setBackend !== 'function') {
+                  throw new Error('Face detector CPU backend is unavailable');
+                }
+                const cpuReady = await tf.setBackend('cpu');
+                if (!cpuReady) throw new Error('Could not initialize the face detector CPU backend');
+                await tf.ready();
                 await faceapi.nets.tinyFaceDetector.loadFromUri('https://cdn.jsdelivr.net/gh/vladmandic/face-api@master/model/');
                 console.log('Face checker loaded (tiny face detector)');
                 done(true);
@@ -300,9 +310,35 @@
           } catch (e) { return null; }
         }
       };
+      let studentCameraSource = null;
+      const localPreviewStates = new WeakMap();
 
       // Request the camera with a fallback chain + device pre-check so the
       // user gets a precise, actionable message instead of a generic error.
+      const CAMERA_REQUEST_TIMEOUT_MS = 15000;
+
+      function requestCameraWithTimeout(constraints) {
+        let timedOut = false;
+        let timer = null;
+        const request = navigator.mediaDevices.getUserMedia(constraints).then(stream => {
+          // getUserMedia cannot be cancelled while a browser permission prompt
+          // is open. Stop a stream if the browser grants it after our timeout.
+          if (timedOut) stream.getTracks().forEach(track => track.stop());
+          return stream;
+        });
+        return Promise.race([
+          request,
+          new Promise((_, reject) => {
+            timer = setTimeout(() => {
+              timedOut = true;
+              const error = new Error('The browser did not answer the camera request within 15 seconds.');
+              error.name = 'TimeoutError';
+              reject(error);
+            }, CAMERA_REQUEST_TIMEOUT_MS);
+          }),
+        ]).finally(() => clearTimeout(timer));
+      }
+
       async function getUserMediaSafe() {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
           const err = new Error('Camera API not available. Use Chrome/Edge/Firefox over HTTPS.');
@@ -315,12 +351,27 @@
         // still succeeds. Let the real getUserMedia() error drive the message.
         let camsVisible = -1;
         let micsVisible = -1;
+        let inventoryTimer = null;
         try {
-          const devices = await navigator.mediaDevices.enumerateDevices();
-          camsVisible = devices.filter(d => d.kind === 'videoinput').length;
-          micsVisible = devices.filter(d => d.kind === 'audioinput').length;
+          const devices = await Promise.race([
+            navigator.mediaDevices.enumerateDevices(),
+            new Promise(resolve => { inventoryTimer = setTimeout(() => resolve(null), 2000); }),
+          ]);
+          if (devices) {
+            camsVisible = devices.filter(d => d.kind === 'videoinput').length;
+            micsVisible = devices.filter(d => d.kind === 'audioinput').length;
+          }
         } catch (e) {
           // enumeration can fail before permission is granted — just continue
+        } finally {
+          clearTimeout(inventoryTimer);
+        }
+        if (camsVisible === 0) {
+          const error = new Error('This browser exposes no video devices.');
+          error.name = 'NotFoundError';
+          error.diagCams = camsVisible;
+          error.diagMic = micsVisible;
+          throw error;
         }
         const attempts = [
           { video: { width: { ideal: 320 }, height: { ideal: 240 }, facingMode: 'user', frameRate: { ideal: 10, max: 15 } } },
@@ -329,10 +380,13 @@
         let lastErr = null;
         for (const constraints of attempts) {
           try {
-            return await navigator.mediaDevices.getUserMedia(constraints);
+            return await requestCameraWithTimeout(constraints);
           } catch (e) {
             lastErr = e;
             try { e.diagCams = camsVisible; e.diagMic = micsVisible; } catch (_ignored) {}
+            // Do not launch a second permission request while the first one may
+            // still be waiting for a browser prompt to be answered.
+            if (e.name === 'TimeoutError') throw e;
             if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError' || e.name === 'SecurityError') throw e;
           }
         }
@@ -340,29 +394,142 @@
         throw lastErr || new Error('Camera unavailable');
       }
 
-            // Camera and Face Verification
+      function waitForVideoFrame(videoElement, timeoutMs = 8000) {
+        return new Promise((resolve, reject) => {
+          const ready = () => videoElement.videoWidth > 0 && videoElement.videoHeight > 0;
+          if (ready()) return resolve();
+          const finish = (error) => {
+            clearTimeout(timer);
+            ['loadedmetadata', 'loadeddata', 'canplay'].forEach(name => videoElement.removeEventListener(name, check));
+            error ? reject(error) : resolve();
+          };
+          const check = () => ready() && finish();
+          const timer = setTimeout(() => finish(new Error('The browser camera did not provide video frames.')), timeoutMs);
+          ['loadedmetadata', 'loadeddata', 'canplay'].forEach(name => videoElement.addEventListener(name, check));
+          check();
+        });
+      }
+
+      function waitForImageFrame(imageElement, timeoutMs = 8000) {
+        if (imageElement.complete && imageElement.naturalWidth > 0) return Promise.resolve();
+        return new Promise((resolve, reject) => {
+          let settled = false;
+          const finish = error => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            imageElement.removeEventListener('load', onLoad);
+            imageElement.removeEventListener('error', onError);
+            error ? reject(error) : resolve();
+          };
+          const onLoad = () => imageElement.naturalWidth > 0 && finish();
+          const onError = () => finish(new Error('The local camera preview could not be loaded.'));
+          const timer = setTimeout(() => finish(new Error('The local camera did not return a preview frame.')), timeoutMs);
+          imageElement.addEventListener('load', onLoad);
+          imageElement.addEventListener('error', onError);
+          if (imageElement.complete && imageElement.naturalWidth > 0) finish();
+        });
+      }
+
+      function startLocalCameraPreview(imageElement) {
+        const state = { stopped: false, timer: null };
+        localPreviewStates.set(imageElement, state);
+        const refresh = () => {
+          if (state.stopped) return;
+          imageElement.onload = () => {
+            if (!state.stopped) state.timer = setTimeout(refresh, 180);
+          };
+          imageElement.onerror = () => {
+            if (!state.stopped) state.timer = setTimeout(refresh, 1000);
+          };
+          imageElement.src = `/camera/frame?ts=${Date.now()}`;
+        };
+        refresh();
+      }
+
+      function stopLocalCameraPreview(imageElement) {
+        const state = imageElement && localPreviewStates.get(imageElement);
+        if (!state) return;
+        state.stopped = true;
+        clearTimeout(state.timer);
+        imageElement.onload = null;
+        imageElement.onerror = null;
+        imageElement.removeAttribute('src');
+        localPreviewStates.delete(imageElement);
+      }
+
+      async function startCameraSource(videoElement, imageElement) {
+        try {
+          const stream = await getUserMediaSafe();
+          videoElement.hidden = false;
+          imageElement.hidden = true;
+          videoElement.srcObject = stream;
+          await waitForVideoFrame(videoElement);
+          await videoElement.play();
+          return { mode: 'browser', stream };
+        } catch (browserError) {
+          if (videoElement.srcObject) videoElement.srcObject.getTracks().forEach(track => track.stop());
+          videoElement.srcObject = null;
+          videoElement.hidden = true;
+          imageElement.hidden = false;
+          const response = await fetch('/camera/status', { cache: 'no-store' });
+          const status = await response.json().catch(() => ({}));
+          if (!response.ok || !status.available) {
+            const detail = status.detail || browserError.message || 'No camera is available.';
+            throw new Error(`${detail} Browser camera error: ${browserError.name || 'Error'}: ${browserError.message || ''}`);
+          }
+          startLocalCameraPreview(imageElement);
+          await waitForImageFrame(imageElement);
+          return { mode: 'local', stream: null };
+        }
+      }
+
+      function stopCameraSource(source, videoElement, imageElement) {
+        if (source && source.stream) source.stream.getTracks().forEach(track => track.stop());
+        if (videoElement) {
+          videoElement.srcObject = null;
+          videoElement.hidden = false;
+        }
+        if (imageElement) {
+          stopLocalCameraPreview(imageElement);
+          imageElement.hidden = true;
+        }
+      }
+
+      async function captureCameraBlob(videoElement, imageElement) {
+        const source = !imageElement.hidden ? imageElement : videoElement;
+        const width = source === imageElement ? imageElement.naturalWidth : videoElement.videoWidth;
+        const height = source === imageElement ? imageElement.naturalHeight : videoElement.videoHeight;
+        if (!width || !height) throw new Error('Camera preview has no frame yet. Wait a moment and try again.');
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d').drawImage(source, 0, 0, width, height);
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.88));
+        if (!blob) throw new Error('Could not encode the camera frame.');
+        return blob;
+      }
+
+      // Camera and Face Verification
       async function startCamera() {
+        const faceStatus = document.getElementById("faceStatus");
+        if (studentCameraSource) return;
+        faceStatus.innerHTML = '<span class="status-dot inactive"></span><span>Connecting to the camera…</span>';
         try {
           const video = document.getElementById('camera');
           const overlay = document.querySelector('.camera-overlay');
-          const stream = await getUserMediaSafe();
-          video.srcObject = stream;
+          studentCameraSource = await startCameraSource(video, document.getElementById('cameraLocal'));
           overlay.classList.add('hidden');
           document.getElementById("verifyBtn").disabled = false;
-          document.getElementById("faceStatus").innerHTML = '<span class="status-dot active"></span><span>Camera on - face check loading...</span>';
+          document.getElementById("faceStatus").innerHTML = '<span class="status-dot active"></span><span>Camera ready. The server verifies your enrolled face when you submit.</span>';
           showNotification("Camera started", "success");
-
-          // Warm up the browser-side face checker (graceful if unavailable)
-          FaceCheck.ensure().then(ok => {
-            document.getElementById("faceStatus").innerHTML =
-              `<span class="status-dot ${ok ? 'active' : 'inactive'}"></span><span>` +
-              (ok ? 'Face check: active - center your face' : 'Face check: unavailable (proxy mode)') +
-              '</span>';
-          });
         } catch (error) {
+          studentCameraSource = null;
           console.error("Error starting camera:", error);
-          document.getElementById("faceStatus").innerHTML = '<span class="status-dot inactive"></span><span>Camera unavailable</span>';
-          showNotification(await cameraErrorDetails(error), "error");
+          const message = await cameraErrorDetails(error);
+          faceStatus.innerHTML = '<span class="status-dot inactive"></span><span></span>';
+          faceStatus.lastElementChild.textContent = message;
+          showNotification(message, "error");
         }
       }
 
@@ -376,7 +543,7 @@
             return 'Camera permission BLOCKED. Click the camera icon in the address bar, set Camera to "Allow", then reload and try again.';
           case 'NotFoundError':
           case 'DevicesNotFoundError':
-            return 'No camera found — this browser sees 0 webcams (the Windows Camera app can still work while browsers are blocked).';
+            return 'No camera device is available to this browser.';
           case 'NotReadableError':
           case 'TrackStartError':
             return 'Camera is busy - close other apps/tabs using it (Zoom, Teams, another browser tab) and try again.';
@@ -384,6 +551,8 @@
             return 'Camera does not support the requested settings. Try again.';
           case 'SecurityError':
             return 'Camera blocked: page must be served over HTTPS.';
+          case 'TimeoutError':
+            return 'Camera request timed out. Reload the page to reset it, allow camera for this page, then try again.';
           default:
             return 'Camera error: ' + ((error && (error.name + ': ' + error.message)) || 'unknown');
         }
@@ -410,15 +579,22 @@
 
         // Tailor the fix for the common Windows case: the site permission can
         // read "granted" while the OS still hides every camera from browsers.
-        if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
-          if (cams === 0) {
-            // The browser enumerates ZERO camera devices — there is no webcam for
-            // it to use. A permission toggle cannot create a device, so do NOT
-            // blame Windows app-permissions here; point at the real causes and
-            // the manual-attendance fallback.
-            msg += ' No camera device is available to this browser (0 webcams detected). Check Device Manager > Cameras (enable if disabled), the Fn-key camera lock / privacy shutter, and that a webcam is connected — or present on a machine with a webcam. Manual attendance works without a camera.';
+        if (errName === 'TimeoutError' && permState === 'prompt') {
+          msg += ' The browser still has this page set to "Ask" for camera access. Allow camera for http://127.0.0.1:8765 in the browser site controls, reload, and retry.';
+        } else if (errName === 'TimeoutError' && permState === 'granted') {
+          msg += ' This page is allowed, but the browser did not return a camera. Check Windows desktop-app camera access and close other camera apps.';
+        } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
+          if (permState === 'prompt') {
+            msg += ' This browser reports that this exact page still has camera access set to "Ask" and exposes 0 cameras. Set Camera to Allow for http://127.0.0.1:8765 in the address-bar site controls, reload, and retry. If it still sees 0, check Windows Settings > Privacy & security > Camera > Let desktop apps access your camera.';
+          } else if (permState === 'denied') {
+            msg += ' This browser has blocked camera access for this site. Use the camera/site controls in the address bar to set Camera to Allow, then reload and retry.';
           } else if (permState === 'granted') {
-            msg += ' A camera is listed but the OS is blocking apps from it. Fix: Windows Settings > Privacy & security > Camera > turn ON "Let desktop apps access your camera" (Chrome/Edge count as desktop apps), then reload this page.';
+            msg += ' Camera permission is granted for this page, but the browser still exposes no usable camera. The app cannot choose a device the browser does not list. Check browser/device-driver access, close other camera apps, then restart the browser. Manual attendance works without a camera.';
+          } else if (cams === 0) {
+            // The browser enumerates ZERO camera devices — there is no webcam for
+            // it to use. The device can still work in Windows Camera while
+            // desktop-app privacy settings block Chrome from seeing it.
+            msg += ' This browser lists 0 cameras. Check Windows Settings > Privacy & security > Camera > Camera access and Let desktop apps access your camera, close other camera apps, then reload. Manual attendance works without a camera.';
           } else {
             msg += ' Check: Windows Settings > Privacy & security > Camera - turn ON "Camera access" and "Let desktop apps access your camera"; Device Manager > Cameras (enable if disabled); the Fn-key camera lock / physical shutter; close Zoom/Teams; then reload.';
           }
@@ -469,25 +645,8 @@
 
         try {
           const video = document.getElementById('camera');
-        const canvas = document.createElement('canvas');
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-        const ctx = canvas.getContext('2d');
-          ctx.drawImage(video, 0, 0);
-
-          // Require a real face in frame before verifying (when checker available).
-          // false = no face found; null = checker unavailable (proxy mode) -> proceed.
-          const hasFace = await FaceCheck.detect(video);
-          if (hasFace === false) {
-            document.getElementById('faceMsg').textContent = 'No face detected. Please look at the camera and try again.';
-            document.getElementById('faceMsg').className = 'status-message';
-            document.getElementById('faceMsg').style.display = 'block';
-            showNotification('No face detected - look at the camera and try again', 'info');
-            return;
-          }
-
-
-          const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+          if (!studentCameraSource) throw new Error('Start the camera before verifying attendance.');
+          const blob = await captureCameraBlob(video, document.getElementById('cameraLocal'));
           const formData = new FormData();
           formData.append('admission_number', admissionNumber);
           formData.append('code', sessionCode);
@@ -526,7 +685,6 @@
           document.getElementById('faceMsg').className = 'status-message success';
           document.getElementById('faceMsg').style.display = 'block';
           showNotification('🎉 Attendance marked successfully!', 'success');
-          loadAttendanceStats();
 
           // If backend returned user_id, use it for WebSocket notifications and persist it
           if (result.user_id) {
@@ -538,6 +696,7 @@
               connectWebSocket();
             } catch (_) {}
           }
+          loadAttendanceStats();
         } catch (error) {
           console.error("Error verifying attendance:", error);
           const msg = String(error && error.message ? error.message : 'Verification failed');
@@ -562,12 +721,16 @@
 
       // WebSocket connection for notifications
       let ws = null;
-      let userId = '1'; // Default user ID for demo
+      let userId = '';
       let reconnectAttempts = 0;
       const maxReconnectAttempts = 5;
       
       function connectWebSocket() {
         if (ws && ws.readyState === WebSocket.OPEN) return;
+        if (!userId) {
+          document.getElementById('faceStatus').textContent = 'Student record not found';
+          return;
+        }
         
         try {
           const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -618,8 +781,14 @@
       // Load Attendance Statistics
       async function loadAttendanceStats() {
         try {
-          // Use the real student user id when available (set after a successful mark), else demo fallback 1
-          const uid = localStorage.getItem('ATTENDAI_USER_ID') || '1';
+          const uid = userId;
+          if (!uid) {
+            document.getElementById('totalSessions').textContent = '—';
+            document.getElementById('attendedSessions').textContent = '—';
+            document.getElementById('attendancePercentage').textContent = '—';
+            document.getElementById('lastAttendance').textContent = 'Student record not found';
+            return;
+          }
           const response = await fetch(`/admin/attendance/stats/${uid}`);
           if (response.ok) {
             const stats = await response.json();
@@ -628,19 +797,46 @@
             document.getElementById('attendancePercentage').textContent = stats.attendance_percentage;
             document.getElementById('lastAttendance').textContent = stats.last_attendance;
           } else {
-            // Fallback to placeholder data if API fails
-            document.getElementById('totalSessions').textContent = '12';
-            document.getElementById('attendedSessions').textContent = '10';
-            document.getElementById('attendancePercentage').textContent = '83%';
-            document.getElementById('lastAttendance').textContent = 'Today';
+            document.getElementById('totalSessions').textContent = '—';
+            document.getElementById('attendedSessions').textContent = '—';
+            document.getElementById('attendancePercentage').textContent = '—';
+            document.getElementById('lastAttendance').textContent = 'Unavailable';
           }
         } catch (error) {
           console.error("Error loading attendance stats:", error);
-          // Fallback to placeholder data
-          document.getElementById('totalSessions').textContent = '12';
-          document.getElementById('attendedSessions').textContent = '10';
-          document.getElementById('attendancePercentage').textContent = '83%';
-          document.getElementById('lastAttendance').textContent = 'Today';
+          document.getElementById('totalSessions').textContent = '—';
+          document.getElementById('attendedSessions').textContent = '—';
+          document.getElementById('attendancePercentage').textContent = '—';
+          document.getElementById('lastAttendance').textContent = 'Unavailable';
+        }
+      }
+
+      async function resolveStudentIdentity() {
+        const email = localStorage.getItem('userEmail') || '';
+        document.getElementById('userEmail').textContent = email || 'Student';
+        if (!email) {
+          userId = '';
+          localStorage.removeItem('ATTENDAI_USER_ID');
+          localStorage.removeItem('ATTENDAI_ADMISSION_NUMBER');
+          return;
+        }
+
+        try {
+          const response = await fetch(`/student/identity?email=${encodeURIComponent(email)}`);
+          if (!response.ok) throw new Error('No matching student record');
+          const identity = await response.json();
+          userId = String(identity.user_id);
+          localStorage.setItem('ATTENDAI_USER_ID', userId);
+          if (identity.admission_number) {
+            localStorage.setItem('ATTENDAI_ADMISSION_NUMBER', identity.admission_number);
+            document.getElementById('admissionNumber').value = identity.admission_number;
+          } else {
+            localStorage.removeItem('ATTENDAI_ADMISSION_NUMBER');
+          }
+        } catch (error) {
+          userId = '';
+          localStorage.removeItem('ATTENDAI_USER_ID');
+          localStorage.removeItem('ATTENDAI_ADMISSION_NUMBER');
         }
       }
 
@@ -1000,6 +1196,10 @@
       }
 
       function logout() {
+        localStorage.removeItem('role');
+        localStorage.removeItem('userEmail');
+        localStorage.removeItem('ATTENDAI_USER_ID');
+        localStorage.removeItem('ATTENDAI_ADMISSION_NUMBER');
         window.location.href = '/login';
       }
 
@@ -1055,12 +1255,11 @@
       });
 
       // Initialize
-      try {
-        const savedId = localStorage.getItem('ATTENDAI_USER_ID');
-        if (savedId) userId = savedId;
-      } catch (_) {}
-      checkActiveSession();
-      connectWebSocket(); // Initialize WebSocket connection
+      resolveStudentIdentity().finally(() => {
+        checkActiveSession();
+        loadAttendanceStats();
+        connectWebSocket();
+      });
     </script>
 
     <style>
@@ -1149,6 +1348,16 @@
         width: 100%;
         height: auto;
         display: block;
+      }
+
+      .camera-wrapper .camera-local-feed {
+        width: 100%;
+        height: auto;
+        display: block;
+      }
+
+      video[hidden], .camera-local-feed[hidden] {
+        display: none !important;
       }
       
       .camera-overlay {

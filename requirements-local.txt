@@ -1,0 +1,5 @@
+# Optional local webcam capture and CPU-only face matching for the desktop demo.
+numpy==1.26.4
+opencv-python-headless==4.11.0.86
+# Uvicorn needs this optional protocol implementation for live notifications.
+websockets==12.0

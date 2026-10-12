@@ -20,7 +20,7 @@ if _configured_database_url:
 elif _HOSTED_RUNTIME:
     DATABASE_URL = ""
 else:
-    DATABASE_URL = "sqlite:///./attendai.db"
+    DATABASE_URL = "sqlite:///./attendai_demo.db"
 
 DB_AVAILABLE = True
 DB_ERROR: str | None = None

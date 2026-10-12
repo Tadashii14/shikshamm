@@ -9,7 +9,6 @@
   <body>
     <div class="login-container">
       <h1 id="pageTitle">Login to Attendance System</h1>
-      <p>Demo access for the project review: any email and password work. This is not production authentication.</p>
 
       <form id="loginForm">
         <div class="form-group">
@@ -25,9 +24,6 @@
     </div>
 
     <script>
-      // Demo login: no backend, no Firebase. Any credentials are approved
-      // and the user is routed to their portal based on where they came from.
-
       const params = new URLSearchParams(location.search);
       const directTarget = params.get('target');
       const storedTarget = localStorage.getItem('landing_target');
@@ -42,12 +38,14 @@
 
       document.getElementById('loginForm').addEventListener('submit', (e) => {
         e.preventDefault();
-        const email = document.getElementById('email').value.trim() || '';
+        const email = document.getElementById('email').value;
         const isTeacher = (target === 'teacher' || target === 'admin');
 
-        // Store role + identity for the dashboards (client-side only)
+        // Store the entered account name for the selected dashboard.
         localStorage.setItem('role', isTeacher ? 'teacher' : 'student');
         localStorage.setItem('userEmail', email);
+        localStorage.removeItem('ATTENDAI_USER_ID');
+        localStorage.removeItem('ATTENDAI_ADMISSION_NUMBER');
         localStorage.removeItem('ADMIN_KEY');
 
         // Route to the correct portal

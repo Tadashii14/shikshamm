@@ -149,6 +149,10 @@ class TestAttendanceStats:
 # 3. Face proxy-mode honesty
 # --------------------------------------------------------------------------
 class TestFaceProxyHonesty:
+    @pytest.fixture(autouse=True)
+    def explicit_proxy_mode(self, monkeypatch):
+        monkeypatch.setenv("FACE_STRICT", "false")
+
     def _active(self, tag):
         client.post("/admin/classes", params={"name": f"F {tag}", "code": f"FC{tag}"})
         r = client.post(
@@ -190,14 +194,26 @@ class TestFaceProxyHonesty:
         assert "result.proxy_mode" in html
         assert "not face-verified" in html
 
-    def test_demo_login_and_admin_camera_are_honest(self):
+    def test_unknown_student_identity_never_guesses_another_user(self):
+        r = client.get("/student/identity", params={"email": "unregistered-login@example.test"})
+        assert r.status_code == 404
+        html = client.get("/student").text
+        assert "/student/identity?email=${encodeURIComponent(email)}" in html
+        assert "let userId = '';" in html
+        assert "|| '1'" not in html
+
+    def test_login_accepts_free_form_credentials_and_admin_camera_is_honest(self):
         login = client.get("/login").text
         admin = client.get("/admin").text
-        assert "any email and password work" in login
-        assert "not production authentication" in login
+        assert "Demo access for the project review" not in login
+        assert 'type="text" id="email" required' in login
+        assert 'type="password" id="password" required' in login
+        assert 'type="email"' not in login
+        assert ".value.trim()" not in login
+        assert "localStorage.setItem('userEmail', email)" in login
         assert "super-secret-key" not in login + admin
-        assert "Camera preview active. Demo mode does not verify identity" in admin
-        assert "Camera preview only. Demo attendance must be marked manually." in admin
+        assert "Enrolled faces are checked when a session is active." in admin
+        assert "Start the camera to verify enrolled faces during an active session." in admin
         assert "Image captured, but identity matching is unavailable" in admin
         assert "not identity recognition" in admin
         assert "manual attendance" in admin.lower()
@@ -208,6 +224,10 @@ class TestFaceProxyHonesty:
 # 4. Face image-upload size enforcement (app/routers/face.py)
 # --------------------------------------------------------------------------
 class TestFaceUploadLimit:
+    @pytest.fixture(autouse=True)
+    def explicit_proxy_mode(self, monkeypatch):
+        monkeypatch.setenv("FACE_STRICT", "false")
+
     """The five /face/* image endpoints must read with the 15 MB cap and return
     HTTP 413 on oversize, without loading the whole oversized file into memory."""
 

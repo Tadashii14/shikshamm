@@ -88,18 +88,23 @@ class HealthChecker:
     def check_face_recognition(self) -> dict:
         """Check face recognition system"""
         try:
-            from app.services.face import get_insightface_model
-            model = get_insightface_model()
-            
-            if model:
+            from app.services.face import get_face_backend
+            backend = get_face_backend()
+
+            if backend == "insightface":
                 return {
                     "status": "healthy",
-                    "message": "Face recognition model loaded successfully"
+                    "message": "InsightFace recognition model loaded successfully"
+                }
+            if backend == "opencv-lbp":
+                return {
+                    "status": "healthy",
+                    "message": "OpenCV LBP face matching is ready for local demo attendance; no liveness check is provided."
                 }
             else:
                 return {
-                    "status": "degraded",  # optional component on cloud/free-tier deployments
-                    "message": "Face recognition model not available"
+                    "status": "degraded",
+                    "message": "Face matching is unavailable. Install the optional local camera dependencies from requirements-local.txt."
                 }
         except Exception as e:
             logger.error(f"Face recognition health check failed: {e}")

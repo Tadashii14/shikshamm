@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Admin Dashboard</title>
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/styles.css?v=20261012" />
     
     
 </head>
@@ -60,9 +60,10 @@
           <div class="col">
             <div class="camera-container">
               <video id="video" autoplay muted playsinline></video>
+              <img id="videoLocal" class="camera-local-feed" alt="Local camera preview" hidden />
               <div id="faceRecognitionStatus" class="status-indicator">
                 <span class="status-dot inactive"></span>
-                <span>Camera preview only. Demo attendance must be marked manually.</span>
+                <span>Start the camera to verify enrolled faces during an active session.</span>
               </div>
             </div>
             <div class="camera-controls">
@@ -129,6 +130,7 @@
             <h3>Enroll Student Face</h3>
             <div class="camera-container">
               <video id="enrollVideo" autoplay muted playsinline></video>
+              <img id="enrollVideoLocal" class="camera-local-feed" alt="Local enrollment camera preview" hidden />
               <canvas id="enrollCanvas" style="display: none;"></canvas>
             </div>
             <div class="form-group">
@@ -157,6 +159,11 @@
       let video = null;
       let adminStream = null;
       let cameraStarting = false;
+      let adminCameraSource = null;
+      let enrollCameraSource = null;
+      let identifyTimer = null;
+      let identifyBusy = false;
+      const localPreviewStates = new WeakMap();
 
       // Demo auth guard: teacher portal login is stored client-side only.
       // No Firebase, no backend check. Works for demo mode.
@@ -198,6 +205,7 @@
             document.getElementById("startSessionBtn").disabled = true;
             document.getElementById("endSessionBtn").disabled = false;
             showNotification('Session started successfully!', 'success');
+            if (adminCameraSource) startAutoIdentify();
           } else {
             const error = await response.json().catch(() => ({}));
             showNotification(error.detail || 'Failed to start session', 'error');
@@ -248,6 +256,7 @@
           document.getElementById('startSessionBtn').disabled = !!active;
           document.getElementById('endSessionBtn').disabled = !active;
           if (active) document.getElementById('sessionCode').value = active.code;
+          if (active && adminCameraSource) startAutoIdentify();
         } catch (_error) {
           showNotification('Could not load session status. Check the database connection and retry.', 'error');
         }
@@ -269,6 +278,15 @@
             s.src = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.13/dist/face-api.js';
             s.onload = async () => {
               try {
+                // Detection runs only when a frame is captured. Use the CPU
+                // backend so it still works when WebGL or CDN WASM is blocked.
+                const tf = faceapi.tf;
+                if (!tf || typeof tf.setBackend !== 'function') {
+                  throw new Error('Face detector CPU backend is unavailable');
+                }
+                const cpuReady = await tf.setBackend('cpu');
+                if (!cpuReady) throw new Error('Could not initialize the face detector CPU backend');
+                await tf.ready();
                 await faceapi.nets.tinyFaceDetector.loadFromUri('https://cdn.jsdelivr.net/gh/vladmandic/face-api@master/model/');
                 console.log('Face checker loaded (tiny face detector)');
                 done(true);
@@ -302,6 +320,30 @@
 
       // Request the camera with a fallback chain + device pre-check so the
       // user gets a precise, actionable message instead of a generic error.
+      const CAMERA_REQUEST_TIMEOUT_MS = 15000;
+
+      function requestCameraWithTimeout(constraints) {
+        let timedOut = false;
+        let timer = null;
+        const request = navigator.mediaDevices.getUserMedia(constraints).then(stream => {
+          // getUserMedia cannot be cancelled while a browser permission prompt
+          // is open. Stop a stream if the browser grants it after our timeout.
+          if (timedOut) stream.getTracks().forEach(track => track.stop());
+          return stream;
+        });
+        return Promise.race([
+          request,
+          new Promise((_, reject) => {
+            timer = setTimeout(() => {
+              timedOut = true;
+              const error = new Error('The browser did not answer the camera request within 15 seconds.');
+              error.name = 'TimeoutError';
+              reject(error);
+            }, CAMERA_REQUEST_TIMEOUT_MS);
+          }),
+        ]).finally(() => clearTimeout(timer));
+      }
+
       async function getUserMediaSafe() {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
           const err = new Error('Camera API not available. Use Chrome/Edge/Firefox over HTTPS.');
@@ -314,12 +356,27 @@
         // still succeeds. Let the real getUserMedia() error drive the message.
         let camsVisible = -1;
         let micsVisible = -1;
+        let inventoryTimer = null;
         try {
-          const devices = await navigator.mediaDevices.enumerateDevices();
-          camsVisible = devices.filter(d => d.kind === 'videoinput').length;
-          micsVisible = devices.filter(d => d.kind === 'audioinput').length;
+          const devices = await Promise.race([
+            navigator.mediaDevices.enumerateDevices(),
+            new Promise(resolve => { inventoryTimer = setTimeout(() => resolve(null), 2000); }),
+          ]);
+          if (devices) {
+            camsVisible = devices.filter(d => d.kind === 'videoinput').length;
+            micsVisible = devices.filter(d => d.kind === 'audioinput').length;
+          }
         } catch (e) {
           // enumeration can fail before permission is granted — just continue
+        } finally {
+          clearTimeout(inventoryTimer);
+        }
+        if (camsVisible === 0) {
+          const error = new Error('This browser exposes no video devices.');
+          error.name = 'NotFoundError';
+          error.diagCams = camsVisible;
+          error.diagMic = micsVisible;
+          throw error;
         }
         const attempts = [
           { video: { width: { ideal: 320 }, height: { ideal: 240 }, facingMode: 'user', frameRate: { ideal: 10, max: 15 } } },
@@ -328,10 +385,13 @@
         let lastErr = null;
         for (const constraints of attempts) {
           try {
-            return await navigator.mediaDevices.getUserMedia(constraints);
+            return await requestCameraWithTimeout(constraints);
           } catch (e) {
             lastErr = e;
             try { e.diagCams = camsVisible; e.diagMic = micsVisible; } catch (_ignored) {}
+            // Do not launch a second permission request while the first one may
+            // still be waiting for a browser prompt to be answered.
+            if (e.name === 'TimeoutError') throw e;
             // Permission/security problems won't be fixed by retrying looser constraints
             if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError' || e.name === 'SecurityError') throw e;
           }
@@ -350,7 +410,7 @@
             return 'Camera permission BLOCKED. Click the camera icon in the address bar, set Camera to "Allow", then reload and try again.';
           case 'NotFoundError':
           case 'DevicesNotFoundError':
-            return 'No camera found — this browser sees 0 webcams (the Windows Camera app can still work while browsers are blocked).';
+            return 'No camera device is available to this browser.';
           case 'NotReadableError':
           case 'TrackStartError':
             return 'Camera is busy — close other apps/tabs using it (Zoom, Teams, another browser tab) and try again.';
@@ -358,6 +418,8 @@
             return 'Camera does not support the requested settings. Try again.';
           case 'SecurityError':
             return 'Camera blocked: page must be served over HTTPS.';
+          case 'TimeoutError':
+            return 'Camera request timed out. Reload the page to reset it, allow camera for this page, then try again.';
           default:
             return 'Camera error: ' + ((error && (error.name + ': ' + error.message)) || 'unknown');
         }
@@ -384,15 +446,22 @@
 
         // Tailor the fix for the common Windows case: the site permission can
         // read "granted" while the OS still hides every camera from browsers.
-        if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
-          if (cams === 0) {
-            // The browser enumerates ZERO camera devices — there is no webcam for
-            // it to use. A permission toggle cannot create a device, so do NOT
-            // blame Windows app-permissions here; point at the real causes and
-            // the manual-attendance fallback.
-            msg += ' No camera device is available to this browser (0 webcams detected). Check Device Manager > Cameras (enable if disabled), the Fn-key camera lock / privacy shutter, and that a webcam is connected — or present on a machine with a webcam. Manual attendance below works without a camera.';
+        if (errName === 'TimeoutError' && permState === 'prompt') {
+          msg += ' The browser still has this page set to "Ask" for camera access. Allow camera for http://127.0.0.1:8765 in the browser site controls, reload, and retry.';
+        } else if (errName === 'TimeoutError' && permState === 'granted') {
+          msg += ' This page is allowed, but the browser did not return a camera. Check Windows desktop-app camera access and close other camera apps.';
+        } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
+          if (permState === 'prompt') {
+            msg += ' This browser reports that this exact page still has camera access set to "Ask" and exposes 0 cameras. Set Camera to Allow for http://127.0.0.1:8765 in the address-bar site controls, reload, and retry. If it still sees 0, check Windows Settings > Privacy & security > Camera > Let desktop apps access your camera.';
+          } else if (permState === 'denied') {
+            msg += ' This browser has blocked camera access for this site. Use the camera/site controls in the address bar to set Camera to Allow, then reload and retry.';
           } else if (permState === 'granted') {
-            msg += ' A camera is listed but the OS is blocking apps from it. Fix: Windows Settings > Privacy & security > Camera > turn ON "Let desktop apps access your camera" (Chrome/Edge count as desktop apps), then reload this page.';
+            msg += ' Camera permission is granted for this page, but the browser still exposes no usable camera. The app cannot choose a device the browser does not list. Check browser/device-driver access, close other camera apps, then restart the browser. Manual attendance remains available.';
+          } else if (cams === 0) {
+            // The browser enumerates ZERO camera devices — there is no webcam for
+            // it to use. The device can still work in Windows Camera while
+            // desktop-app privacy settings block Chrome from seeing it.
+            msg += ' This browser lists 0 cameras. Check Windows Settings > Privacy & security > Camera > Camera access and Let desktop apps access your camera, close other camera apps, then reload. Manual attendance remains available.';
           } else {
             msg += ' Check: Windows Settings > Privacy & security > Camera - turn ON "Camera access" and "Let desktop apps access your camera"; Device Manager > Cameras (enable if disabled); the Fn-key camera lock / physical shutter; close Zoom/Teams; then reload.';
           }
@@ -430,26 +499,128 @@
         });
       }
 
+      function waitForImageFrame(imageElement, timeoutMs = 8000) {
+        if (imageElement.complete && imageElement.naturalWidth > 0) return Promise.resolve();
+        return new Promise((resolve, reject) => {
+          let settled = false;
+          const finish = (error) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            imageElement.removeEventListener('load', onLoad);
+            imageElement.removeEventListener('error', onError);
+            error ? reject(error) : resolve();
+          };
+          const onLoad = () => imageElement.naturalWidth > 0 && finish();
+          const onError = () => finish(new Error('The local camera preview could not be loaded.'));
+          const timer = setTimeout(() => finish(new Error('The local camera did not return a preview frame.')), timeoutMs);
+          imageElement.addEventListener('load', onLoad);
+          imageElement.addEventListener('error', onError);
+          if (imageElement.complete && imageElement.naturalWidth > 0) finish();
+        });
+      }
+
+      function startLocalCameraPreview(imageElement) {
+        const state = { stopped: false, timer: null };
+        localPreviewStates.set(imageElement, state);
+        const refresh = () => {
+          if (state.stopped) return;
+          imageElement.onload = () => {
+            if (!state.stopped) state.timer = setTimeout(refresh, 180);
+          };
+          imageElement.onerror = () => {
+            if (!state.stopped) state.timer = setTimeout(refresh, 1000);
+          };
+          imageElement.src = `/camera/frame?ts=${Date.now()}`;
+        };
+        refresh();
+      }
+
+      function stopLocalCameraPreview(imageElement) {
+        const state = imageElement && localPreviewStates.get(imageElement);
+        if (!state) return;
+        state.stopped = true;
+        clearTimeout(state.timer);
+        imageElement.onload = null;
+        imageElement.onerror = null;
+        imageElement.removeAttribute('src');
+        localPreviewStates.delete(imageElement);
+      }
+
+      async function startCameraSource(videoElement, imageElement) {
+        try {
+          const stream = await getUserMediaSafe();
+          videoElement.hidden = false;
+          imageElement.hidden = true;
+          videoElement.srcObject = stream;
+          await waitForVideoFrame(videoElement);
+          await videoElement.play();
+          return { mode: 'browser', stream };
+        } catch (browserError) {
+          if (videoElement.srcObject) videoElement.srcObject.getTracks().forEach(track => track.stop());
+          videoElement.srcObject = null;
+          videoElement.hidden = true;
+          imageElement.hidden = false;
+          const response = await fetch('/camera/status', { cache: 'no-store' });
+          const status = await response.json().catch(() => ({}));
+          if (!response.ok || !status.available) {
+            const detail = status.detail || browserError.message || 'No camera is available.';
+            throw new Error(`${detail} Browser camera error: ${browserError.name || 'Error'}: ${browserError.message || ''}`);
+          }
+          startLocalCameraPreview(imageElement);
+          await waitForImageFrame(imageElement);
+          return { mode: 'local', stream: null };
+        }
+      }
+
+      function stopCameraSource(source, videoElement, imageElement) {
+        if (source && source.stream) source.stream.getTracks().forEach(track => track.stop());
+        if (videoElement) {
+          videoElement.srcObject = null;
+          videoElement.hidden = false;
+        }
+        if (imageElement) {
+          stopLocalCameraPreview(imageElement);
+          imageElement.hidden = true;
+        }
+      }
+
+      async function captureCameraBlob(videoElement, imageElement) {
+        const source = !imageElement.hidden ? imageElement : videoElement;
+        const width = source === imageElement ? imageElement.naturalWidth : videoElement.videoWidth;
+        const height = source === imageElement ? imageElement.naturalHeight : videoElement.videoHeight;
+        if (!width || !height) throw new Error('Camera preview has no frame yet. Wait a moment and try again.');
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d').drawImage(source, 0, 0, width, height);
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.88));
+        if (!blob) throw new Error('Could not encode the camera frame.');
+        return blob;
+      }
+
       async function startCamera() {
         if (cameraStarting) return;
-        if (adminStream && adminStream.getVideoTracks().some(track => track.readyState === 'live')) return;
+        if (adminCameraSource) return;
         cameraStarting = true;
         document.getElementById('startCameraBtn').disabled = true;
+        setFaceStatus('Connecting to the camera…', false);
         try {
-          adminStream = await getUserMediaSafe();
           video = document.getElementById('video');
-          video.srcObject = adminStream;
-          await waitForVideoFrame(video);
-          await video.play();
+          adminCameraSource = await startCameraSource(video, document.getElementById('videoLocal'));
+          adminStream = adminCameraSource.stream;
           document.getElementById("stopCameraBtn").disabled = false;
-          setFaceStatus('Camera preview active. Demo mode does not verify identity; use manual attendance.', true);
-          showNotification('Camera preview active. Demo mode requires manual attendance; no face was verified.', 'info');
+          setFaceStatus(adminCameraSource.mode === 'local'
+            ? 'Local camera active. Enrolled faces are checked when a session is active.'
+            : 'Browser camera active. Enrolled faces are checked when a session is active.', true);
+          showNotification('Camera preview active.', 'success');
+          if (currentSession) startAutoIdentify();
           
         } catch (error) {
           console.error('Camera error:', error);
-          if (adminStream) adminStream.getTracks().forEach(track => track.stop());
+          stopCameraSource(adminCameraSource, video, document.getElementById('videoLocal'));
+          adminCameraSource = null;
           adminStream = null;
-          if (video) video.srcObject = null;
           document.getElementById("startCameraBtn").disabled = false;
           document.getElementById("stopCameraBtn").disabled = true;
           const message = await cameraErrorDetails(error);
@@ -461,14 +632,51 @@
       }
 
       function stopCamera() {
-        if (adminStream) {
-          adminStream.getTracks().forEach(track => track.stop());
-          adminStream = null;
-        }
+        if (identifyTimer) clearInterval(identifyTimer);
+        identifyTimer = null;
+        stopCameraSource(adminCameraSource, video, document.getElementById('videoLocal'));
+        adminCameraSource = null;
+        adminStream = null;
         
         document.getElementById("startCameraBtn").disabled = false;
         document.getElementById("stopCameraBtn").disabled = true;
         showNotification('Camera stopped', 'info');
+      }
+
+      function startAutoIdentify() {
+        if (identifyTimer) clearInterval(identifyTimer);
+        identifyFrame();
+        identifyTimer = setInterval(identifyFrame, 2500);
+      }
+
+      async function identifyFrame() {
+        if (identifyBusy || !currentSession || !adminCameraSource) return;
+        identifyBusy = true;
+        try {
+          const blob = await captureCameraBlob(video, document.getElementById('videoLocal'));
+          const form = new FormData();
+          form.append('code', currentSession.code);
+          form.append('file', blob, 'attendance-frame.jpg');
+          const response = await fetch('/face/auto-identify-and-mark', { method: 'POST', body: form });
+          const result = await response.json().catch(() => ({}));
+          if (response.ok && result.user_id && result.message === 'Marked present') {
+            const displayName = result.student_name || `Student ${result.user_id}`;
+            addToAttendanceList(displayName, new Date());
+            setFaceStatus(`Face recognized: ${displayName}. Attendance marked.`, true);
+            showNotification(`Attendance marked for ${displayName}`, 'success');
+          } else if (!response.ok && response.status !== 401 && response.status !== 400) {
+            setFaceStatus(result.detail || 'Face attendance could not be saved. Check the database.', false);
+          } else if (result.proxy_mode) {
+            setFaceStatus('Face matching is disabled. Use manual attendance or enable face recognition.', false);
+          } else if (result.message === 'Face recognition not available') {
+            setFaceStatus('Face matching is unavailable. Install requirements-local.txt and restart the app.', false);
+          }
+        } catch (error) {
+          console.warn('Automatic face check failed:', error);
+          setFaceStatus(error.message || 'Could not capture a camera frame.', false);
+        } finally {
+          identifyBusy = false;
+        }
       }
 
       function addToAttendanceList(studentId, timestamp) {
@@ -481,13 +689,18 @@
 
         const attendanceItem = document.createElement('div');
         attendanceItem.className = 'attendance-item';
-        attendanceItem.innerHTML = `
-          <div class="student-info">
-            <strong>${studentId}</strong>
-            <span class="timestamp">${timestamp.toLocaleTimeString()}</span>
-          </div>
-          <span class="status present">Present</span>
-        `;
+        const info = document.createElement('div');
+        info.className = 'student-info';
+        const name = document.createElement('strong');
+        name.textContent = studentId;
+        const time = document.createElement('span');
+        time.className = 'timestamp';
+        time.textContent = timestamp.toLocaleTimeString();
+        const status = document.createElement('span');
+        status.className = 'status present';
+        status.textContent = 'Present';
+        info.append(name, time);
+        attendanceItem.append(info, status);
 
         attendanceList.insertBefore(attendanceItem, attendanceList.firstChild);
 
@@ -540,23 +753,17 @@
       }
 
       async function startEnrollCamera() {
+        const startButton = document.getElementById('startEnrollCameraBtn');
+        startButton.disabled = true;
         try {
           const video = document.getElementById('enrollVideo');
-          const stream = await getUserMediaSafe();
-          video.srcObject = stream;
-          
-          await new Promise(resolve => {
-            if (video.readyState >= 2) return resolve();
-            video.onloadedmetadata = () => resolve();
-          });
-          
-          video.play();
-          document.getElementById("startEnrollCameraBtn").disabled = true;
+          enrollCameraSource = await startCameraSource(video, document.getElementById('enrollVideoLocal'));
           document.getElementById("enrollFaceBtn").disabled = false;
-          showNotification('Enrollment camera started', 'success');
+          showNotification('Enrollment camera started. Center one face in the preview.', 'success');
         } catch (error) {
           console.error('Enrollment camera error:', error);
           showNotification(await cameraErrorDetails(error), 'error');
+          startButton.disabled = false;
         }
       }
 
@@ -569,21 +776,8 @@
         }
         
         try {
-          const video = document.getElementById('enrollVideo');
-
-          // Require a real face in frame before enrolling (when checker available)
-          const hasFace = await FaceCheck.detect(video);
-          if (hasFace === false) {
-            showNotification('No face detected - center your face in the frame and try again.', 'error');
-            return;
-          }
-          const canvas = document.getElementById('enrollCanvas');
-          const ctx = canvas.getContext('2d');
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-          ctx.drawImage(video, 0, 0);
-          
-          const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.8));
+          if (!enrollCameraSource) throw new Error('Start the enrollment camera first.');
+          const blob = await captureCameraBlob(document.getElementById('enrollVideo'), document.getElementById('enrollVideoLocal'));
           const fd = new FormData();
           fd.append('admission_number', admissionNumber);
           fd.append('file', new File([blob], 'face.jpg', { type: 'image/jpeg' }));
@@ -670,16 +864,13 @@
 
       // Load a face-presence detector for enrollment capture only. It does not
       // identify a person; identity matching requires the server face model.
-      FaceCheck.ensure().then(ready => {
-        const status = document.getElementById('enrollmentFaceStatus');
-        if (status) status.textContent = ready
-          ? 'Browser face detector ready for enrollment capture.'
-          : 'Browser face detector unavailable; enrollment capture may not detect a face.';
-      });
+      const enrollmentStatus = document.getElementById('enrollmentFaceStatus');
+      if (enrollmentStatus) enrollmentStatus.textContent = 'Face detection and matching are checked by the local server.';
 
       // Cleanup on page unload
       window.addEventListener('beforeunload', () => {
         stopCamera();
+        stopCameraSource(enrollCameraSource, document.getElementById('enrollVideo'), document.getElementById('enrollVideoLocal'));
       });
     </script>
     <style>

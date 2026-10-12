@@ -1,5 +1,5 @@
 from __future__ import annotations
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Header, WebSocket
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Header, WebSocket, WebSocketDisconnect
 from sqlmodel import Session, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 import os
@@ -10,27 +10,19 @@ except Exception:
 
 from app.db import DATABASE_UNAVAILABLE_DETAIL, get_session, mark_database_unavailable
 from app.models import User, AttendanceSession, Attendance
-from app.services.face import compute_face_embedding, cosine_similarity
+from app.services.face import compute_face_embedding, cosine_similarity, face_match_threshold
 from app.services.uploads import read_limited
+from app.notifications import manager, notify_user as send_notification
 
 router = APIRouter(prefix="/face", tags=["face"]) 
 
-# WebSocket clients storage
-connected_clients = {}
-
-
 async def notify_user(user_id: int, message: str):
-    ws = connected_clients.get(str(user_id))
-    if ws:
-        try:
-            await ws.send_json({"message": message})
-        except Exception as e:
-            print(f"WebSocket send failed for user {user_id}: {e}")
+    await send_notification(user_id, message)
 
 
 def is_face_strict() -> bool:
-    """Feature flag: when False (default), bypass face model checks for cloud/free-tier."""
-    return str(os.getenv("FACE_STRICT", "false")).strip().lower() in {"1", "true", "yes", "on"}
+    """Require an actual enrolled face by default; opt into proxy mode explicitly."""
+    return str(os.getenv("FACE_STRICT", "true")).strip().lower() not in {"0", "false", "no", "off"}
 
 
 async def _read_face_image(file: UploadFile) -> bytes:
@@ -45,13 +37,14 @@ async def _read_face_image(file: UploadFile) -> bytes:
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket, user_id: str):
-    await websocket.accept()
-    connected_clients[user_id] = websocket
+    await manager.connect(user_id, websocket)
     try:
         while True:
             await websocket.receive_text()  # keep connection alive
-    except Exception:
-        connected_clients.pop(user_id, None)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        manager.disconnect(user_id, websocket)
 
 
 @router.post("/enroll")
@@ -114,7 +107,7 @@ async def verify_and_mark(code: str = Form(...), user_id: int = Form(...), file:
             np.array(user.face_embedding, dtype=np.float32) if np is not None else list(map(float, user.face_embedding))
         )
         sim = cosine_similarity(emb, user_emb)
-        if sim < 0.35:
+        if sim < face_match_threshold(emb):
             raise HTTPException(status_code=401, detail="Face mismatch")
         sess = session.exec(
             select(AttendanceSession).where(AttendanceSession.code == code, AttendanceSession.is_active == True)
@@ -174,7 +167,7 @@ async def auto_identify_and_mark(code: str = Form(...), file: UploadFile = File(
                     best_user_id = u.id
             except Exception:
                 continue
-        if best_user_id is None or best_sim < 0.35:
+        if best_user_id is None or best_sim < face_match_threshold(emb):
             raise HTTPException(status_code=401, detail="No matching enrolled user")
         
         existing = session.exec(
@@ -187,7 +180,13 @@ async def auto_identify_and_mark(code: str = Form(...), file: UploadFile = File(
         session.add(att)
         session.commit()
         await notify_user(best_user_id, f"✅ Attendance marked for session {sess.code}")
-        return {"message": "Marked present", "user_id": best_user_id, "similarity": best_sim}
+        student = session.get(User, best_user_id)
+        return {
+            "message": "Marked present",
+            "user_id": best_user_id,
+            "student_name": student.full_name if student else None,
+            "similarity": best_sim,
+        }
     except HTTPException:
         raise
     except IntegrityError:
@@ -270,7 +269,7 @@ async def verify_by_admission(admission_number: str = Form(...), code: str = For
             np.array(user.face_embedding, dtype=np.float32) if np is not None else list(map(float, user.face_embedding))
         )
         sim = cosine_similarity(emb, user_emb)
-        if sim < 0.35:
+        if sim < face_match_threshold(emb):
             raise HTTPException(status_code=401, detail="Face verification failed - similarity too low")
         sess = session.exec(
             select(AttendanceSession).where(AttendanceSession.code == code, AttendanceSession.is_active == True)

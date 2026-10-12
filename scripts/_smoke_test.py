@@ -1,7 +1,9 @@
-"""Smoke test: exercise every route of the app locally (proxy mode defaults)."""
+"""Route smoke test; strict face enrollment/matching is covered in tests/test_face_recognition.py."""
 import io
+import os
 import sys
 
+os.environ["FACE_STRICT"] = "false"  # Exercise the explicitly labeled demo proxy paths here.
 sys.path.insert(0, ".")
 from fastapi.testclient import TestClient
 from app.main import app
@@ -31,8 +33,15 @@ for path in ["/", "/login", "/admin", "/student", "/quiz", "/flashcards", "/time
 
 # ---- Admin: class, students, session ----
 check("POST /admin/classes", client.post("/admin/classes", params={"name": "Smoke Class", "code": "SMOKE", "created_by_user_id": 1}))
-check("POST /admin/students/create", client.post("/admin/students/create", params={"email": "smoke1@test.com", "full_name": "Smoke One", "admission_number": "SMK001"}))
+student1 = client.post("/admin/students/create", params={"email": "smoke1@test.com", "full_name": "Smoke One", "admission_number": "SMK001"})
+check("POST /admin/students/create", student1)
 check("POST /admin/students/create", client.post("/admin/students/create", params={"email": "smoke2@test.com", "full_name": "Smoke Two", "admission_number": "SMK002"}))
+identity = client.get("/student/identity", params={"email": "smoke1@test.com"})
+check("GET /student/identity (registered student)", identity)
+if identity.status_code == 200:
+    identity_ok = identity.json().get("role") == "student" and identity.json().get("admission_number") == "SMK001"
+    print(f"{'PASS' if identity_ok else 'FAIL'} student login resolves the matching student record")
+    results.append((identity_ok, "student identity maps to matching roster row", 0, 0))
 check("POST /admin/sessions/start", client.post("/admin/sessions/start", params={"class_code": "SMOKE", "code": "SMKC1", "subject": "Math"}))
 check("GET /admin/sessions/active", client.get("/admin/sessions/active"))
 
@@ -159,16 +168,29 @@ if r.status_code == 200:
     if cards:
         print("  sample:", str(cards[0])[:120])
 
+# ---- PDF question answering: retrieve an answer and source passage ----
+r = client.post(
+    "/api/advanced/pdf/ask-question",
+    files={"file": ("bio.pdf", real_pdf, "application/pdf")},
+    data={"question": "What does chlorophyll absorb?"},
+)
+check("POST /api/advanced/pdf/ask-question (real PDF)", r, expect=200)
+if r.status_code == 200:
+    qa = r.json()
+    qa_ok = bool((qa.get("answer") or "").strip()) and bool(qa.get("sources"))
+    print(f"{'PASS' if qa_ok else 'FAIL'} PDF question answering returned an answer with sources")
+    results.append((qa_ok, "PDF question answering answer+sources", 0, 0))
+
 # Pages must ship the new camera/face code
 admin_html = client.get("/admin").text
 student_html = client.get("/student").text
 for name, html, marker in [
     ("admin.html getUserMediaSafe", admin_html, "getUserMediaSafe"),
-    ("admin.html FaceCheck", admin_html, "const FaceCheck"),
-    ("admin.html sendFrame face gate", admin_html, "await FaceCheck.detect(video)"),
+    ("admin.html local camera fallback", admin_html, "/camera/frame"),
+    ("admin.html auto face attendance", admin_html, "/face/auto-identify-and-mark"),
     ("student.html getUserMediaSafe", student_html, "getUserMediaSafe"),
-    ("student.html FaceCheck", student_html, "const FaceCheck"),
-    ("student.html verify face gate", student_html, "await FaceCheck.detect(video)"),
+    ("student.html local camera fallback", student_html, "/camera/frame"),
+    ("student.html face verification", student_html, "/face/verify-by-admission"),
 ]:
     ok = marker in html
     print(f"{'PASS' if ok else 'FAIL'} {name}")
@@ -192,9 +214,36 @@ check("POST /api/advanced/timetable/generate (form)", client.post("/api/advanced
 check("GET /health", client.get("/health"))
 check("GET /metrics", client.get("/metrics"))
 
-# ---- Notes (upload txt + flashcard gen) ----
-check("POST /notes/upload (txt)", client.post("/notes/upload", data={"user_id": "1"}, files={"file": ("n.txt", b"Chapter one. The cell is the basic unit of life. " * 10, "text/plain")}))
-check("POST /notes/quiz/generate", client.post("/notes/quiz/generate", data={"note_id": "1", "num_questions": "3"}))
+# ---- Notes (upload txt + quiz + persistent flashcards) ----
+note_upload = client.post(
+    "/notes/upload",
+    data={"user_id": "1"},
+    files={"file": ("n.txt", b"Chapter one. The cell is the basic unit of life. " * 10, "text/plain")},
+)
+check("POST /notes/upload (txt)", note_upload)
+if note_upload.status_code == 200:
+    note_id = note_upload.json()["note_id"]
+    quiz_resp = client.post("/notes/quiz/generate", data={"note_id": str(note_id), "num_questions": "3"})
+    check("POST /notes/quiz/generate", quiz_resp)
+    if quiz_resp.status_code == 200:
+        questions = quiz_resp.json().get("questions", [])
+        quiz_ok = bool(questions) and all(q.get("question") and len(q.get("options", [])) >= 2 for q in questions)
+        print(f"{'PASS' if quiz_ok else 'FAIL'} notes quiz returned {len(questions)} usable questions")
+        results.append((quiz_ok, "notes quiz content", 0, 0))
+
+    cards_resp = client.post(
+        "/notes/flashcards/generate",
+        data={"note_id": str(note_id), "max_cards": "8"},
+    )
+    check("POST /notes/flashcards/generate", cards_resp)
+    if cards_resp.status_code == 200:
+        list_resp = client.get("/notes/flashcards/list", params={"note_id": note_id})
+        check("GET /notes/flashcards/list", list_resp)
+        if list_resp.status_code == 200:
+            cards = list_resp.json()
+            cards_ok = bool(cards) and all(c.get("front") and c.get("back") for c in cards)
+            print(f"{'PASS' if cards_ok else 'FAIL'} notes flashcards persisted: {len(cards)} cards with front/back")
+            results.append((cards_ok, "notes flashcards persisted", 0, 0))
 
 fails = [r for r in results if not r[0]]
 print(f"\n===== {len(results) - len(fails)}/{len(results)} passed =====")

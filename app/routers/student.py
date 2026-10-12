@@ -16,17 +16,11 @@ def resolve_identity(
     admission_number: str | None = None,
     session: Session = Depends(get_session),
 ):
-    """Resolve which student is currently logged in (temporary demo identity shim).
+    """Resolve a typed account name to its registered student record.
 
-    Login is intentionally a dummy client-side login for now, so there is no
-    token/session to read the student from. The login page stores the typed
-    e-mail in localStorage and this endpoint turns it into the real student id
-    that the student page uses to request its own attendance statistics.
-
-    It is deterministic (same e-mail -> same id, on every refresh), and it never
-    guesses: an unknown e-mail returns 404 so the page can show an honest error
-    instead of falling back to another student's data. Real authentication (JWT)
-    replaces this shim in a later step.
+    The local demo login stores the entered account name in the browser. Only an
+    exact student-roster match is returned; an unknown name never falls back to
+    another student's attendance data.
     """
     if not email and not admission_number:
         raise HTTPException(status_code=400, detail="email or admission_number is required")
@@ -35,7 +29,7 @@ def resolve_identity(
     if email:
         user = session.exec(select(User).where(User.email == email)).first()
         if not user:
-            # Dummy login does not normalize what was typed, so match loosely too.
+            # Preserve free-form input, but allow case/outer-space differences.
             user = session.exec(select(User).where(func.lower(User.email) == email.strip().lower())).first()
     if not user and admission_number:
         user = session.exec(select(User).where(User.admission_number == admission_number)).first()

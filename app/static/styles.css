@@ -125,6 +125,16 @@ body {
   background: var(--muted);
 }
 
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+button:disabled:hover {
+  transform: none;
+  box-shadow: none;
+}
+
 .status-indicator {
   display: flex;
   align-items: center;
@@ -156,6 +166,20 @@ body {
 video {
   width: 100%;
   max-width: 640px;
+}
+
+.camera-local-feed {
+  width: 100%;
+  max-width: 640px;
+  min-height: 240px;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 8px;
+  background: #0b0f18;
+}
+
+video[hidden], .camera-local-feed[hidden] {
+  display: none !important;
 }
 
 .attendance-list {
