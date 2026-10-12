@@ -59,20 +59,43 @@ def _opencv_lbp_embedding(image):
         faces = detector.detectMultiScale(
             gray, scaleFactor=1.08, minNeighbors=4, minSize=(48, 48)
         )
-        # Low contrast is common with USB webcams. Retry after equalization,
-        # but never choose one face from a group.
+        # Low contrast is common with USB webcams. Retry after equalization.
         if len(faces) == 0:
             faces = detector.detectMultiScale(
                 cv2.equalizeHist(gray), scaleFactor=1.08, minNeighbors=4, minSize=(48, 48)
             )
-        if len(faces) != 1:
+        primary = _select_primary_face(faces)
+        if primary is None:
             return None
-        x, y, width, height = faces[0]
+        x, y, width, height = primary
         face = cv2.equalizeHist(gray[y : y + height, x : x + width])
         face = cv2.resize(face, (128, 128), interpolation=cv2.INTER_AREA)
         return _lbp_descriptor(face)
     except Exception as exc:
         print(f"OpenCV LBP face processing failed ({exc.__class__.__name__})")
+        return None
+
+
+def _select_primary_face(faces):
+    """Select a clearly dominant foreground face; reject similarly sized faces.
+
+    Classroom backgrounds often contain small/partial faces. Requiring exactly
+    one Haar box makes attendance fail whenever anybody is behind the student.
+    A face must be at least 1.75x the area of the next detection to be selected;
+    close-sized detections remain ambiguous and fail closed.
+    """
+    try:
+        boxes = [tuple(map(int, box)) for box in faces]
+        if not boxes:
+            return None
+        boxes.sort(key=lambda box: box[2] * box[3], reverse=True)
+        if len(boxes) > 1:
+            largest_area = boxes[0][2] * boxes[0][3]
+            second_area = boxes[1][2] * boxes[1][3]
+            if second_area <= 0 or largest_area < 1.75 * second_area:
+                return None
+        return boxes[0]
+    except (TypeError, ValueError, IndexError):
         return None
 
 

@@ -12,6 +12,7 @@ from uuid import uuid4
 np = pytest.importorskip("numpy", reason="numpy not installed; face-service numpy path unavailable")
 from app.services.face import (
     _lbp_descriptor,
+    _select_primary_face,
     compute_face_embedding,
     cosine_similarity,
     face_match_margin,
@@ -185,6 +186,13 @@ class TestFaceRecognition:
         assert face_match_margin(embedding) == 0.01
         assert face_match_threshold([0.1] * 512) == 0.35
         assert face_match_margin([0.1] * 512) == 0.06
+
+    def test_primary_face_ignores_small_background_faces_but_rejects_equal_faces(self):
+        # One close subject plus a much smaller background/partial face.
+        assert _select_primary_face([(20, 10, 260, 300), (410, 80, 90, 100)]) == (20, 10, 260, 300)
+        # Two similarly sized people are still ambiguous and fail closed.
+        assert _select_primary_face([(20, 10, 180, 200), (240, 10, 170, 190)]) is None
+        assert _select_primary_face([]) is None
 
     def test_consistent_lbp_match_uses_calibrated_small_margin(self, monkeypatch):
         from types import SimpleNamespace
