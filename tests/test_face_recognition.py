@@ -62,17 +62,17 @@ class TestFaceRecognition:
         assert response.status_code == 400
         assert "five camera frames" in response.json()["detail"]
 
-    def test_auto_identify_rejects_ambiguous_match(self, monkeypatch):
+    def test_auto_identify_skips_ambiguous_frames_when_no_clear_consensus(self, monkeypatch):
         from fastapi import HTTPException
         from types import SimpleNamespace
 
         monkeypatch.setattr(face_router, "_rank_face_users", lambda _embedding, _users: [(1, 0.90), (2, 0.89)])
         embeddings = [np.zeros(512, dtype=np.float32) for _ in range(5)]
-        with pytest.raises(HTTPException, match="inconclusive") as error:
+        with pytest.raises(HTTPException, match="consistently") as error:
             face_router._identify_consistent_user(embeddings, [SimpleNamespace(id=1), SimpleNamespace(id=2)])
         assert error.value.status_code == 401
 
-    def test_auto_identify_rejects_frames_that_match_different_students(self, monkeypatch):
+    def test_auto_identify_uses_majority_when_one_or_two_frames_flicker(self, monkeypatch):
         from fastapi import HTTPException
         from types import SimpleNamespace
 
@@ -82,8 +82,26 @@ class TestFaceRecognition:
             lambda embedding, _users: [(1, 0.90), (2, 0.80)] if embedding[0] == 0 else [(2, 0.90), (1, 0.80)],
         )
         embeddings = [np.array([index % 2], dtype=np.float32) for index in range(5)]
-        with pytest.raises(HTTPException, match="different students") as error:
-            face_router._identify_consistent_user(embeddings, [SimpleNamespace(id=1), SimpleNamespace(id=2)])
+        user_id, similarity = face_router._identify_consistent_user(
+            embeddings, [SimpleNamespace(id=1), SimpleNamespace(id=2)]
+        )
+        assert user_id == 1
+        assert similarity == 0.90
+
+    def test_auto_identify_rejects_frames_without_a_majority(self, monkeypatch):
+        from fastapi import HTTPException
+        from types import SimpleNamespace
+
+        monkeypatch.setattr(
+            face_router,
+            "_rank_face_users",
+            lambda embedding, _users: [(int(embedding[0]), 0.90), (99, 0.70)],
+        )
+        embeddings = [np.array([index], dtype=np.float32) for index in [1, 2, 1, 2, 3]]
+        with pytest.raises(HTTPException, match="unclear across frames") as error:
+            face_router._identify_consistent_user(
+                embeddings, [SimpleNamespace(id=1), SimpleNamespace(id=2), SimpleNamespace(id=3)]
+            )
         assert error.value.status_code == 401
 
     def test_cosine_similarity(self):

@@ -58,15 +58,24 @@ def _identify_consistent_user(embeddings, users: list[User]) -> tuple[int, float
         if not ranked or ranked[0][1] < face_match_threshold(embedding):
             continue
         if len(ranked) > 1 and ranked[0][1] - ranked[1][1] < face_match_margin(embedding):
-            raise HTTPException(status_code=401, detail="Face match is inconclusive because enrolled profiles are too similar. Re-enroll this student's face in bright, front-facing light, or mark attendance manually")
+            # LBP is noisy across adjacent webcam frames. Treat a close score
+            # as an inconclusive frame and let the 3-of-5 consensus decide.
+            continue
         frame_matches.append(ranked[0])
 
     if len(frame_matches) < MIN_CONSISTENT_FACE_MATCHES:
         raise HTTPException(status_code=401, detail="Face could not be matched consistently; hold still and try again")
-    if len({user_id for user_id, _score in frame_matches}) != 1:
-        raise HTTPException(status_code=401, detail="Camera frames matched different students; ensure only one person is in view and try again")
-    best_user_id = frame_matches[0][0]
-    average_similarity = sum(score for _user_id, score in frame_matches) / len(frame_matches)
+    votes = {}
+    scores = {}
+    for matched_user_id, score in frame_matches:
+        votes[matched_user_id] = votes.get(matched_user_id, 0) + 1
+        scores.setdefault(matched_user_id, []).append(score)
+    best_user_id = max(votes, key=votes.get)
+    # Require a strict majority of the minimum three good frames. Outlier
+    # frames no longer veto otherwise stable recognition.
+    if votes[best_user_id] < MIN_CONSISTENT_FACE_MATCHES:
+        raise HTTPException(status_code=401, detail="Face match is unclear across frames; center your face and hold still, then retry")
+    average_similarity = sum(scores[best_user_id]) / votes[best_user_id]
     return best_user_id, average_similarity
 
 async def notify_user(user_id: int, message: str):
