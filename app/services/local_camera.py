@@ -54,6 +54,10 @@ class LocalCamera:
                     capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
                     capture.set(cv2.CAP_PROP_FPS, 15)
                     try:
+                        capture.set(cv2.CAP_PROP_AUTOFOCUS, 1)
+                    except Exception:
+                        pass
+                    try:
                         capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                     except Exception:
                         pass
@@ -74,8 +78,16 @@ class LocalCamera:
                 ok, frame = capture.read()
                 if not ok or frame is None:
                     raise CameraUnavailableError("The local camera opened but stopped returning frames.")
+                height, width = frame.shape[:2]
+                if width > 640 or height > 480:
+                    scale = min(640 / width, 480 / height)
+                    frame = cv2.resize(
+                        frame,
+                        (max(1, int(width * scale)), max(1, int(height * scale))),
+                        interpolation=cv2.INTER_AREA,
+                    )
                 encoded_ok, encoded = cv2.imencode(
-                    ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 82]
+                    ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 88]
                 )
                 if not encoded_ok:
                     continue

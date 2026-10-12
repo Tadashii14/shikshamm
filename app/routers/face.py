@@ -10,7 +10,7 @@ except Exception:
 
 from app.db import DATABASE_UNAVAILABLE_DETAIL, get_session, mark_database_unavailable
 from app.models import User, AttendanceSession, Attendance
-from app.services.face import compute_face_embedding, cosine_similarity, face_match_threshold
+from app.services.face import compute_face_embedding, cosine_similarity, face_match_threshold, get_face_backend
 from app.services.uploads import read_limited
 from app.notifications import manager, notify_user as send_notification
 
@@ -145,8 +145,15 @@ async def auto_identify_and_mark(code: str = Form(...), file: UploadFile = File(
         data = await _read_face_image(file)
         emb = compute_face_embedding(data)
         if emb is None:
-            # Gracefully degrade on cloud/free-tier where face model may be unavailable
-            return {"message": "Face recognition not available"}
+            if get_face_backend() is None:
+                return {
+                    "message": "Face recognition backend is unavailable.",
+                    "error_code": "face_backend_unavailable",
+                }
+            return {
+                "message": "No face detected. Face the camera, move back until your full face is visible, and improve lighting or focus.",
+                "error_code": "no_face_detected",
+            }
         sess = session.exec(
             select(AttendanceSession).where(AttendanceSession.code == code, AttendanceSession.is_active == True)
         ).first()

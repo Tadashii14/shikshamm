@@ -22,13 +22,15 @@ def test_empty_camera_inventory_still_requests_browser_and_skips_remote_local_ca
 const vm = require('node:vm');
 const cameraFunctions = JSON.parse(process.argv[1]);
 const calls = { capture: 0, localFallback: 0 };
+const requests = [];
 let failBrowserCamera = false;
 const context = {
   navigator: {
     mediaDevices: {
       enumerateDevices: async () => [],
-      getUserMedia: async () => {
+      getUserMedia: async constraints => {
         calls.capture += 1;
+        requests.push(constraints);
         if (failBrowserCamera) {
           const error = new Error('Requested device not found');
           error.name = 'NotFoundError';
@@ -66,6 +68,8 @@ vm.runInNewContext(cameraFunctions, context);
     streamReturned: Boolean(stream),
     inventoryErrorName,
     captureCalls: calls.capture,
+    requestedWidth: requests[0].video.width.ideal,
+    requestedHeight: requests[0].video.height.ideal,
     localFallbackCalls: calls.localFallback,
     remoteErrorName
   }));
@@ -83,6 +87,8 @@ vm.runInNewContext(cameraFunctions, context);
         "streamReturned": True,
         "inventoryErrorName": "",
         "captureCalls": 3,
+        "requestedWidth": 640,
+        "requestedHeight": 480,
         "localFallbackCalls": 0,
         "remoteErrorName": "NotFoundError",
     }

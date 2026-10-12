@@ -16,6 +16,7 @@ from app.services.face import (
     cosine_similarity,
     face_match_threshold,
 )
+from app.routers import face as face_router
 from fastapi.testclient import TestClient
 from app.main import app
 from app.db import init_db
@@ -25,6 +26,27 @@ init_db()
 client = TestClient(app)
 
 class TestFaceRecognition:
+    @pytest.mark.parametrize(
+        ("backend", "expected_code"),
+        [("opencv-lbp", "no_face_detected"), (None, "face_backend_unavailable")],
+    )
+    def test_auto_identify_distinguishes_no_face_from_missing_backend(
+        self, monkeypatch, backend, expected_code
+    ):
+        monkeypatch.setattr(face_router, "compute_face_embedding", lambda _data: None)
+        monkeypatch.setattr(face_router, "get_face_backend", lambda: backend)
+
+        response = client.post(
+            "/face/auto-identify-and-mark",
+            data={"code": "camera-test"},
+            files={"file": ("frame.jpg", b"not-needed-by-mock", "image/jpeg")},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["error_code"] == expected_code
+        if expected_code == "no_face_detected":
+            assert "move back" in response.json()["message"]
+
     def test_cosine_similarity(self):
         """Test cosine similarity calculation"""
         # Test identical vectors

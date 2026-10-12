@@ -372,7 +372,7 @@
           clearTimeout(inventoryTimer);
         }
         const attempts = [
-          { video: { width: { ideal: 320 }, height: { ideal: 240 }, facingMode: 'user', frameRate: { ideal: 10, max: 15 } } },
+          { video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user', frameRate: { ideal: 15, max: 24 } } },
           { video: true },
         ];
         let lastErr = null;
@@ -592,10 +592,13 @@
         const height = source === imageElement ? imageElement.naturalHeight : videoElement.videoHeight;
         if (!width || !height) throw new Error('Camera preview has no frame yet. Wait a moment and try again.');
         const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        canvas.getContext('2d').drawImage(source, 0, 0, width, height);
-        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.88));
+        const scale = Math.min(1, 640 / width, 480 / height);
+        const outputWidth = Math.max(1, Math.round(width * scale));
+        const outputHeight = Math.max(1, Math.round(height * scale));
+        canvas.width = outputWidth;
+        canvas.height = outputHeight;
+        canvas.getContext('2d').drawImage(source, 0, 0, outputWidth, outputHeight);
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
         if (!blob) throw new Error('Could not encode the camera frame.');
         return blob;
       }
@@ -669,8 +672,10 @@
             setFaceStatus(result.detail || 'Face attendance could not be saved. Check the database.', false);
           } else if (result.proxy_mode) {
             setFaceStatus('Face matching is disabled. Use manual attendance or enable face recognition.', false);
-          } else if (result.message === 'Face recognition not available') {
+          } else if (result.error_code === 'face_backend_unavailable') {
             setFaceStatus('Face matching is unavailable. Install requirements-local.txt and restart the app.', false);
+          } else if (result.error_code === 'no_face_detected') {
+            setFaceStatus('No face detected. Face the camera, move back until your full face is visible, and improve lighting or focus.', false);
           }
         } catch (error) {
           console.warn('Automatic face check failed:', error);
