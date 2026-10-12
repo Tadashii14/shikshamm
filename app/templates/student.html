@@ -650,11 +650,14 @@
         try {
           const video = document.getElementById('camera');
           if (!studentCameraSource) throw new Error('Start the camera before verifying attendance.');
-          const blob = await captureCameraBlob(video, document.getElementById('cameraLocal'));
           const formData = new FormData();
           formData.append('admission_number', admissionNumber);
           formData.append('code', sessionCode);
-          formData.append('file', blob, 'face.jpg');
+          for (let index = 0; index < 5; index++) {
+            const blob = await captureCameraBlob(video, document.getElementById('cameraLocal'));
+            formData.append('file', blob, `face-${index + 1}.jpg`);
+            if (index < 4) await new Promise(resolve => setTimeout(resolve, 220));
+          }
 
           const response = await fetch('/face/verify-by-admission', {
             method: 'POST',

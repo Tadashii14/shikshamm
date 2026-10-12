@@ -657,10 +657,15 @@
         if (identifyBusy || !currentSession || !adminCameraSource) return;
         identifyBusy = true;
         try {
-          const blob = await captureCameraBlob(video, document.getElementById('videoLocal'));
+          const frames = [];
+          for (let index = 0; index < 5; index++) {
+            if (!currentSession || !adminCameraSource) return;
+            frames.push(await captureCameraBlob(video, document.getElementById('videoLocal')));
+            if (index < 4) await new Promise(resolve => setTimeout(resolve, 220));
+          }
           const form = new FormData();
           form.append('code', currentSession.code);
-          form.append('file', blob, 'attendance-frame.jpg');
+          frames.forEach((blob, index) => form.append('file', blob, `attendance-frame-${index + 1}.jpg`));
           const response = await fetch('/face/auto-identify-and-mark', { method: 'POST', body: form });
           const result = await response.json().catch(() => ({}));
           if (response.ok && result.user_id && result.message === 'Marked present') {
@@ -676,6 +681,8 @@
             setFaceStatus('Face matching is unavailable. Install requirements-local.txt and restart the app.', false);
           } else if (result.error_code === 'no_face_detected') {
             setFaceStatus('No face detected. Face the camera, move back until your full face is visible, and improve lighting or focus.', false);
+          } else if ((response.status === 400 || response.status === 401) && result.detail) {
+            setFaceStatus(result.detail, false);
           }
         } catch (error) {
           console.warn('Automatic face check failed:', error);

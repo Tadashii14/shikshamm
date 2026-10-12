@@ -56,14 +56,17 @@ def _opencv_lbp_embedding(image):
             return None
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         faces = detector.detectMultiScale(
-            gray,
-            scaleFactor=1.1,
-            minNeighbors=5,
-            minSize=(64, 64),
+            gray, scaleFactor=1.08, minNeighbors=4, minSize=(48, 48)
         )
+        # Low contrast is common with USB webcams. Retry after equalization,
+        # but never choose one face from a group.
         if len(faces) == 0:
+            faces = detector.detectMultiScale(
+                cv2.equalizeHist(gray), scaleFactor=1.08, minNeighbors=4, minSize=(48, 48)
+            )
+        if len(faces) != 1:
             return None
-        x, y, width, height = max(faces, key=lambda box: int(box[2]) * int(box[3]))
+        x, y, width, height = faces[0]
         face = cv2.equalizeHist(gray[y : y + height, x : x + width])
         face = cv2.resize(face, (128, 128), interpolation=cv2.INTER_AREA)
         return _lbp_descriptor(face)
@@ -149,10 +152,9 @@ def compute_face_embedding(image_bytes: bytes):
         model = get_insightface_model()
         if model is not None:
             faces = model.get(image)
-            if not faces:
+            if len(faces) != 1:
                 return None
-            # Use the largest face
-            face = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
+            face = faces[0]
             emb = face.normed_embedding
             if emb is None or np is None:
                 return None

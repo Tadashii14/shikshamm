@@ -16,6 +16,53 @@ from app.notifications import manager, notify_user as send_notification
 
 router = APIRouter(prefix="/face", tags=["face"]) 
 
+AUTO_ATTENDANCE_FRAME_COUNT = 5
+MIN_CONSISTENT_FACE_MATCHES = 3
+MIN_FACE_MATCH_MARGIN = 0.06
+
+
+async def _face_embeddings_from_frames(files: list[UploadFile]):
+    if len(files) != AUTO_ATTENDANCE_FRAME_COUNT:
+        raise HTTPException(status_code=400, detail="Capture five camera frames and try again")
+    embeddings = []
+    for frame in files:
+        embeddings.append(compute_face_embedding(await _read_face_image(frame)))
+    return [embedding for embedding in embeddings if embedding is not None]
+
+
+def _rank_face_users(embedding, users: list[User]):
+    ranked = []
+    for user in users:
+        try:
+            user_embedding = (
+                np.array(user.face_embedding, dtype=np.float32)
+                if np is not None else list(map(float, user.face_embedding))
+            )
+            ranked.append((user.id, cosine_similarity(embedding, user_embedding)))
+        except Exception:
+            continue
+    ranked.sort(key=lambda item: item[1], reverse=True)
+    return ranked
+
+
+def _identify_consistent_user(embeddings, users: list[User]) -> tuple[int, float]:
+    frame_matches = []
+    for embedding in embeddings:
+        ranked = _rank_face_users(embedding, users)
+        if not ranked or ranked[0][1] < face_match_threshold(embedding):
+            continue
+        if len(ranked) > 1 and ranked[0][1] - ranked[1][1] < MIN_FACE_MATCH_MARGIN:
+            raise HTTPException(status_code=401, detail="Face match is ambiguous; ensure only one person is in view and try again")
+        frame_matches.append(ranked[0])
+
+    if len(frame_matches) < MIN_CONSISTENT_FACE_MATCHES:
+        raise HTTPException(status_code=401, detail="Face could not be matched consistently; hold still and try again")
+    if len({user_id for user_id, _score in frame_matches}) != 1:
+        raise HTTPException(status_code=401, detail="Camera frames matched different students; ensure only one person is in view and try again")
+    best_user_id = frame_matches[0][0]
+    average_similarity = sum(score for _user_id, score in frame_matches) / len(frame_matches)
+    return best_user_id, average_similarity
+
 async def notify_user(user_id: int, message: str):
     await send_notification(user_id, message)
 
@@ -76,7 +123,7 @@ async def enroll(user_id: int = Form(...), file: UploadFile = File(...), session
 
 
 @router.post("/verify-and-mark")
-async def verify_and_mark(code: str = Form(...), user_id: int = Form(...), file: UploadFile = File(...), session: Session = Depends(get_session)):
+async def verify_and_mark(code: str = Form(...), user_id: int = Form(...), files: list[UploadFile] = File(..., alias="file"), session: Session = Depends(get_session)):
     try:
         # Fast path when strict mode is off
         if not is_face_strict():
@@ -96,9 +143,8 @@ async def verify_and_mark(code: str = Form(...), user_id: int = Form(...), file:
             await notify_user(user_id, f"Attendance marked (demo mode) — session {sess.code}")
             return {"message": "Attendance marked (demo mode — not face-verified)", "user_id": user_id, "proxy_mode": True}
 
-        data = await _read_face_image(file)
-        emb = compute_face_embedding(data)
-        if emb is None:
+        embeddings = await _face_embeddings_from_frames(files)
+        if len(embeddings) < MIN_CONSISTENT_FACE_MATCHES:
             raise HTTPException(status_code=400, detail="No face detected")
         user = session.get(User, user_id)
         if not user or not user.face_embedding:
@@ -106,9 +152,14 @@ async def verify_and_mark(code: str = Form(...), user_id: int = Form(...), file:
         user_emb = (
             np.array(user.face_embedding, dtype=np.float32) if np is not None else list(map(float, user.face_embedding))
         )
-        sim = cosine_similarity(emb, user_emb)
-        if sim < face_match_threshold(emb):
+        accepted = []
+        for emb in embeddings:
+            similarity = cosine_similarity(emb, user_emb)
+            if similarity >= face_match_threshold(emb):
+                accepted.append(similarity)
+        if len(accepted) < MIN_CONSISTENT_FACE_MATCHES:
             raise HTTPException(status_code=401, detail="Face mismatch")
+        sim = sum(accepted) / len(accepted)
         sess = session.exec(
             select(AttendanceSession).where(AttendanceSession.code == code, AttendanceSession.is_active == True)
         ).first()
@@ -136,15 +187,14 @@ async def verify_and_mark(code: str = Form(...), user_id: int = Form(...), file:
 
 
 @router.post("/auto-identify-and-mark")
-async def auto_identify_and_mark(code: str = Form(...), file: UploadFile = File(...), session: Session = Depends(get_session), x_admin_key: str | None = Header(default=None)):
+async def auto_identify_and_mark(code: str = Form(...), files: list[UploadFile] = File(..., alias="file"), session: Session = Depends(get_session), x_admin_key: str | None = Header(default=None)):
     try:
         admin_key = os.getenv("ADMIN_KEY")
         if admin_key and (x_admin_key is None or x_admin_key != admin_key):
             raise HTTPException(status_code=403, detail="Forbidden")
         
-        data = await _read_face_image(file)
-        emb = compute_face_embedding(data)
-        if emb is None:
+        embeddings = await _face_embeddings_from_frames(files)
+        if len(embeddings) < MIN_CONSISTENT_FACE_MATCHES:
             if get_face_backend() is None:
                 return {
                     "message": "Face recognition backend is unavailable.",
@@ -161,21 +211,9 @@ async def auto_identify_and_mark(code: str = Form(...), file: UploadFile = File(
             raise HTTPException(status_code=404, detail="Active session not found")
         
         users = session.exec(select(User).where(User.face_embedding.is_not(None))).all()
-        best_user_id = None
-        best_sim = -1.0
-        for u in users:
-            try:
-                uemb = (
-                    np.array(u.face_embedding, dtype=np.float32) if np is not None else list(map(float, u.face_embedding))
-                )
-                s = cosine_similarity(emb, uemb)
-                if s > best_sim:
-                    best_sim = s
-                    best_user_id = u.id
-            except Exception:
-                continue
-        if best_user_id is None or best_sim < face_match_threshold(emb):
+        if not users:
             raise HTTPException(status_code=401, detail="No matching enrolled user")
+        best_user_id, best_sim = _identify_consistent_user(embeddings, users)
         
         existing = session.exec(
             select(Attendance).where(Attendance.session_id == sess.id, Attendance.user_id == best_user_id)
@@ -239,7 +277,7 @@ async def enroll_by_admission(admission_number: str = Form(...), file: UploadFil
 
 
 @router.post("/verify-by-admission")
-async def verify_by_admission(admission_number: str = Form(...), code: str = Form(...), file: UploadFile = File(...), session: Session = Depends(get_session)):
+async def verify_by_admission(admission_number: str = Form(...), code: str = Form(...), files: list[UploadFile] = File(..., alias="file"), session: Session = Depends(get_session)):
     try:
         # Fast path when strict mode is off
         if not is_face_strict():
@@ -262,9 +300,8 @@ async def verify_by_admission(admission_number: str = Form(...), code: str = For
             await notify_user(user.id, f"Attendance marked (demo mode) — session {sess.code}")
             return {"message": "Attendance marked (demo mode — not face-verified)", "user_id": user.id, "proxy_mode": True, "student_name": user.full_name}
 
-        data = await _read_face_image(file)
-        emb = compute_face_embedding(data)
-        if emb is None:
+        embeddings = await _face_embeddings_from_frames(files)
+        if len(embeddings) < MIN_CONSISTENT_FACE_MATCHES:
             # Graceful response to avoid frontend error toasts on cloud/free-tier
             return {"message": "No face detected", "similarity": 0.0}
         user = session.exec(select(User).where(User.admission_number == admission_number)).first()
@@ -275,9 +312,14 @@ async def verify_by_admission(admission_number: str = Form(...), code: str = For
         user_emb = (
             np.array(user.face_embedding, dtype=np.float32) if np is not None else list(map(float, user.face_embedding))
         )
-        sim = cosine_similarity(emb, user_emb)
-        if sim < face_match_threshold(emb):
+        accepted = []
+        for emb in embeddings:
+            similarity = cosine_similarity(emb, user_emb)
+            if similarity >= face_match_threshold(emb):
+                accepted.append(similarity)
+        if len(accepted) < MIN_CONSISTENT_FACE_MATCHES:
             raise HTTPException(status_code=401, detail="Face verification failed - similarity too low")
+        sim = sum(accepted) / len(accepted)
         sess = session.exec(
             select(AttendanceSession).where(AttendanceSession.code == code, AttendanceSession.is_active == True)
         ).first()

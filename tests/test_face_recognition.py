@@ -25,6 +25,10 @@ from app.db import init_db
 init_db()
 client = TestClient(app)
 
+
+def camera_frame_files(content=b"test-frame"):
+    return [("file", (f"frame-{index}.jpg", content, "image/jpeg")) for index in range(5)]
+
 class TestFaceRecognition:
     @pytest.mark.parametrize(
         ("backend", "expected_code"),
@@ -39,13 +43,46 @@ class TestFaceRecognition:
         response = client.post(
             "/face/auto-identify-and-mark",
             data={"code": "camera-test"},
-            files={"file": ("frame.jpg", b"not-needed-by-mock", "image/jpeg")},
+            files=camera_frame_files(b"not-needed-by-mock"),
         )
 
         assert response.status_code == 200
         assert response.json()["error_code"] == expected_code
         if expected_code == "no_face_detected":
             assert "move back" in response.json()["message"]
+
+    def test_auto_identify_rejects_single_frame_requests(self):
+        response = client.post(
+            "/face/auto-identify-and-mark",
+            data={"code": "camera-test"},
+            files={"file": ("frame.jpg", b"frame", "image/jpeg")},
+        )
+        assert response.status_code == 400
+        assert "five camera frames" in response.json()["detail"]
+
+    def test_auto_identify_rejects_ambiguous_match(self, monkeypatch):
+        from fastapi import HTTPException
+        from types import SimpleNamespace
+
+        monkeypatch.setattr(face_router, "_rank_face_users", lambda _embedding, _users: [(1, 0.90), (2, 0.89)])
+        embeddings = [np.zeros(512, dtype=np.float32) for _ in range(5)]
+        with pytest.raises(HTTPException, match="ambiguous") as error:
+            face_router._identify_consistent_user(embeddings, [SimpleNamespace(id=1), SimpleNamespace(id=2)])
+        assert error.value.status_code == 401
+
+    def test_auto_identify_rejects_frames_that_match_different_students(self, monkeypatch):
+        from fastapi import HTTPException
+        from types import SimpleNamespace
+
+        monkeypatch.setattr(
+            face_router,
+            "_rank_face_users",
+            lambda embedding, _users: [(1, 0.90), (2, 0.80)] if embedding[0] == 0 else [(2, 0.90), (1, 0.80)],
+        )
+        embeddings = [np.array([index % 2], dtype=np.float32) for index in range(5)]
+        with pytest.raises(HTTPException, match="different students") as error:
+            face_router._identify_consistent_user(embeddings, [SimpleNamespace(id=1), SimpleNamespace(id=2)])
+        assert error.value.status_code == 401
 
     def test_cosine_similarity(self):
         """Test cosine similarity calculation"""
@@ -176,7 +213,7 @@ class TestFaceRecognition:
         verified = client.post(
             "/face/verify-by-admission",
             data={"admission_number": admission_number, "code": session_code},
-            files=payload,
+            files=camera_frame_files(),
         )
         assert verified.status_code == 200
         assert verified.json()["user_id"] == student_id
@@ -191,7 +228,7 @@ class TestFaceRecognition:
         mismatch = client.post(
             "/face/verify-by-admission",
             data={"admission_number": admission_number, "code": session_code},
-            files=payload,
+            files=camera_frame_files(),
         )
         assert mismatch.status_code == 401
         assert "similarity too low" in mismatch.json()["detail"].lower()
@@ -211,7 +248,7 @@ class TestFaceRecognition:
         identified = client.post(
             "/face/auto-identify-and-mark",
             data={"code": second_session},
-            files=payload,
+            files=camera_frame_files(),
         )
         assert identified.status_code == 200
         assert identified.json()["user_id"] == student_id
