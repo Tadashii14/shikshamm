@@ -26,17 +26,37 @@ AI_GENERATION_REQUESTS = Counter('ai_generation_requests_total', 'Total AI gener
 class HealthChecker:
     def __init__(self):
         self.start_time = time.time()
+        self._last_database_recovery_attempt = 0.0
 
     def check_database(self) -> dict:
         """Check database connectivity and health"""
-        # If startup already determined a configured database is unreachable,
-        # report that honestly (without attempting a query that could hang or
-        # echo the connection string). See app.db.DB_AVAILABLE / DB_ERROR.
+        # A managed database can become reachable shortly after the web service
+        # starts. The import-time probe fails closed in that case, so retry a
+        # configured remote database occasionally instead of keeping the
+        # process unhealthy forever. _can_connect uses a short timeout and
+        # never logs the DSN.
         if not db_module.DB_AVAILABLE:
-            return {
-                "status": "unhealthy",
-                "message": db_module.DB_ERROR or "Database unavailable",
-            }
+            remote_database = db_module.DATABASE_URL.startswith(("postgresql", "mysql", "mssql"))
+            if db_module.engine is not None and remote_database:
+                now = time.monotonic()
+                if now - self._last_database_recovery_attempt >= 15:
+                    self._last_database_recovery_attempt = now
+                    try:
+                        if db_module._can_connect(db_module.DATABASE_URL):
+                            db_module.DB_AVAILABLE = True
+                            db_module.DB_ERROR = None
+                            # Startup skipped schema creation while the DB was
+                            # unavailable. create_all is idempotent for tables
+                            # already present and initializes a new demo DB.
+                            db_module.init_db()
+                    except Exception as e:  # noqa: BLE001 - never expose DSN
+                        db_module.mark_database_unavailable(e, "connection probe")
+
+            if not db_module.DB_AVAILABLE:
+                return {
+                    "status": "unhealthy",
+                    "message": db_module.DB_ERROR or "Database unavailable",
+                }
         try:
             if db_module.engine is None:
                 raise RuntimeError("database engine is unavailable")

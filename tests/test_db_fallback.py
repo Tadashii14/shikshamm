@@ -7,9 +7,7 @@ Verifies:
 - /health reports the database honestly when it is unavailable.
 - Database error responses/logs never expose the connection string/credentials.
 
-Run with a temp DB, e.g.:
-  set DATABASE_URL=sqlite:///./_dbfb_tmp.db
-  .venv\\Scripts\\python.exe -m pytest tests/test_db_fallback.py -q
+tests/conftest.py supplies a fresh temporary SQLite database for each run.
 
 No real attendai.db is touched; no external database is contacted (the
 unreachable-DB case uses a reserved local port that refuses instantly).
@@ -132,6 +130,42 @@ class TestHealthHonestyAndNoSecretLeak:
         status = health_checker.check_database()
         assert status["status"] == "unhealthy"
         assert "unreachable" in status["message"].lower()
+
+    def test_health_recovers_when_remote_db_becomes_available(self, monkeypatch):
+        import app.services.monitoring as monitoring
+
+        monkeypatch.setattr(db, "DB_AVAILABLE", False)
+        monkeypatch.setattr(db, "DB_ERROR", "Configured database is unreachable")
+        monkeypatch.setattr(db, "DATABASE_URL", "postgresql+psycopg://user:secret@db.example/demo")
+        monkeypatch.setattr(db, "engine", object())
+        monkeypatch.setattr(db, "_can_connect", lambda _url: True)
+
+        def initialize_after_reconnect():
+            db.DB_AVAILABLE = True
+            db.DB_ERROR = None
+
+        monkeypatch.setattr(db, "init_db", initialize_after_reconnect)
+
+        class _Rows:
+            def all(self):
+                return []
+
+        class _Session:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def exec(self, *_args, **_kwargs):
+                return _Rows()
+
+        monkeypatch.setattr(monitoring, "Session", lambda _engine: _Session())
+        status = monitoring.HealthChecker().check_database()
+
+        assert status["status"] == "healthy"
+        assert db.DB_AVAILABLE is True
+        assert db.DB_ERROR is None
 
     def test_db_error_message_has_no_credentials(self, monkeypatch):
         # Simulate a driver error whose text embeds a DSN with a password.

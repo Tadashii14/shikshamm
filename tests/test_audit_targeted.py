@@ -2,9 +2,7 @@ r"""Focused regression tests for the completion-pass changes.
 
 Covers upload-size enforcement, attendance statistics, and face proxy honesty.
 
-Run with a temp DB, e.g.:
-  set DATABASE_URL=sqlite:///./_audit_tmp.db
-  .venv\Scripts\python.exe -m pytest tests/test_audit_targeted.py -q
+tests/conftest.py supplies a fresh temporary SQLite database for each run.
 
 No real attendai.db is touched; no face-recognition stack is required.
 """
